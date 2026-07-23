@@ -1,0 +1,6 @@
+{
+  "name": "Ultra-Ject5",
+  "description": "A sleek mobile-focused projects tracker to manage key projects, track progress on initiatives, and keep tabs on milestones.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
