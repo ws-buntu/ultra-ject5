@@ -1,0 +1,80 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "A project tracking initiatives and milestones",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "enum": ["Development", "Design", "Marketing", "Operations", "Finance"] },
+        "status": { "type": "string", "enum": ["planning", "active", "on-hold", "completed", "archived"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "startDate": { "type": "string", "maxLength": 30 },
+        "endDate": { "type": "string", "maxLength": 30 },
+        "owner": { "type": "string", "maxLength": 150 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "color": { "type": "string", "maxLength": 30 },
+        "notes": { "type": "string", "maxLength": 10000 },
+        "quickNotes": { "type": "string", "maxLength": 5000 },
+        "reminderDateTime": { "type": "string", "maxLength": 40 },
+        "reminderSent": { "type": "boolean" },
+        "earlyWarningEnabled": { "type": "boolean" },
+        "earlyWarningSent": { "type": "boolean" },
+        "tags": { "type": "array" },
+        "goals": { "type": "array" },
+        "collaborators": { "type": "array" },
+        "initiatives": { "type": "array" },
+        "milestones": { "type": "array" },
+        "history": { "type": "array" },
+        "pinned": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "name", "category", "status", "priority", "startDate", "endDate", "owner", "ownerId"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile document",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 200 },
+        "displayName": { "type": "string", "maxLength": 150 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["uid", "email"]
+    },
+    "DailyFocusRecord": {
+      "title": "DailyFocusRecord",
+      "description": "Daily single-priority focus goal",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "text": { "type": "string", "maxLength": 300 },
+        "completed": { "type": "boolean" },
+        "date": { "type": "string", "maxLength": 20 },
+        "completedAt": { "type": "string", "maxLength": 40 },
+        "tag": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "userId", "text", "completed", "date"]
+    }
+  },
+  "firestore": {
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Projects managed by authenticated users"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document"
+    },
+    "/users/{userId}/dailyFocus/{focusId}": {
+      "schema": "DailyFocusRecord",
+      "description": "Daily focus tracker history records"
+    }
+  }
+}

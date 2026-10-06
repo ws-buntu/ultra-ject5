@@ -193,6 +193,13 @@ export default function ProjectCard({
     e.stopPropagation();
     if (!onUpdateProject) return;
 
+    // Trigger subtle tactile feedback
+    if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
+      try {
+        navigator.vibrate([25, 20, 25]);
+      } catch {}
+    }
+
     const nextStatus = project.status === 'archived' ? 'active' : 'archived';
     const updatedHistory: ProjectActivity[] = [
       {
@@ -200,7 +207,7 @@ export default function ProjectCard({
         timestamp: new Date().toISOString(),
         type: 'project_edited',
         message: nextStatus === 'archived' ? 'Project archived' : 'Project unarchived',
-        details: nextStatus === 'archived' ? 'Archived via swipe action' : 'Unarchived via swipe action'
+        details: nextStatus === 'archived' ? 'Archived via Quick Archive action' : 'Unarchived via Quick Archive action'
       },
       ...(project.history || [])
     ];
@@ -210,6 +217,24 @@ export default function ProjectCard({
       status: nextStatus,
       history: updatedHistory
     });
+
+    // Provide immediate feedback toast
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('ultra_jects_toast', {
+          detail: {
+            id: `quick-archive-${Date.now()}-${project.id}`,
+            projectId: project.id,
+            projectName: project.name,
+            type: 'reminder',
+            message: nextStatus === 'archived'
+              ? `"${project.name}" has been moved to archive.`
+              : `"${project.name}" has been restored to active initiatives.`
+          }
+        })
+      );
+    }
+
     setIsSwipedOpen(false);
   };
 
@@ -661,7 +686,7 @@ export default function ProjectCard({
   }
 
   return (
-    <div className="relative overflow-hidden rounded-xl w-full" id={`swipeable-wrapper-${project.id}`}>
+    <div className="project-card-wrapper relative overflow-hidden rounded-xl w-full" id={`swipeable-wrapper-${project.id}`}>
       {/* UNDERNEATH LAYER: Swipe Actions */}
       <div 
         className="absolute right-0 top-0 bottom-0 flex items-stretch z-0 bg-stone-950 border border-white/[0.04] rounded-xl overflow-hidden select-none"
@@ -833,6 +858,26 @@ export default function ProjectCard({
             {statusLabel.label}
           </span>
 
+          {/* Subtle Quick Archive Action Button */}
+          {onUpdateProject && (
+            <button
+              type="button"
+              onClick={handleQuickArchive}
+              className={`quick-archive-btn group/archive px-2 py-0.5 rounded text-[9px] font-mono font-medium transition-all duration-200 cursor-pointer flex items-center gap-1 border select-none ${
+                project.status === 'archived'
+                  ? 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25'
+                  : 'bg-white/[0.03] hover:bg-white/[0.08] text-stone-400 hover:text-amber-400 border-white/[0.06] hover:border-amber-500/30'
+              }`}
+              title={project.status === 'archived' ? 'Restore initiative (one-tap)' : 'Quick Archive initiative (one-tap)'}
+              aria-label={project.status === 'archived' ? 'Restore initiative' : 'Quick archive initiative'}
+            >
+              <Archive className={`w-3 h-3 transition-colors ${project.status === 'archived' ? 'text-amber-400' : 'text-stone-400 group-hover/archive:text-amber-400'}`} />
+              <span className="uppercase tracking-wider text-[8px] font-bold">
+                {project.status === 'archived' ? 'Restore' : 'Archive'}
+              </span>
+            </button>
+          )}
+
           {/* Context Menu Dropdown Trigger */}
           {onUpdateProject && (
             <div className="relative">
@@ -912,6 +957,22 @@ export default function ProjectCard({
                     >
                       <Bell className="w-3.5 h-3.5 text-stone-500 group-hover:text-stone-300 transition-colors" />
                       Set Reminder
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        handleQuickArchive(e);
+                        setIsMenuOpen(false);
+                      }}
+                      className="w-full text-left px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-stone-300 hover:text-amber-400 hover:bg-stone-900 rounded-lg transition-all flex items-center justify-between group cursor-pointer"
+                      title={project.status === 'archived' ? 'Restore initiative' : 'Archive initiative with one tap'}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Archive className="w-3.5 h-3.5 text-stone-500 group-hover:text-amber-400 transition-colors" />
+                        {project.status === 'archived' ? 'Restore Project' : 'Archive Project'}
+                      </span>
+                      <span className="text-[8px] font-mono text-stone-500 group-hover:text-amber-400/80">1-Tap</span>
                     </button>
 
                     <div className="border-t border-white/[0.03] mt-1 pt-1">

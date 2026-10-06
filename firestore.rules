@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Diagnostic/Connection test document
+    match /test/{testId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User profile documents and subcollections
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create, update: if isOwner(userId) && incoming().uid == userId;
+      allow delete: if false;
+
+      // User's daily focus items
+      match /dailyFocus/{focusId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && incoming().userId == userId;
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Project documents
+    match /projects/{projectId} {
+      allow get: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid ||
+        (resource.data.collaborators is list && resource.data.collaborators.hasAny([request.auth.token.email]))
+      );
+
+      // Query Enforcer: require user ownership filter for lists
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isSignedIn() && isValidId(projectId) && (
+        incoming().ownerId == request.auth.uid &&
+        incoming().id is string && incoming().id.size() <= 128 &&
+        incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 150
+      );
+
+      allow update: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid &&
+        incoming().ownerId == resource.data.ownerId &&
+        incoming().id == resource.data.id
+      );
+
+      allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+    }
+  }
+}

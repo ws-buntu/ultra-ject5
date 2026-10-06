@@ -480,6 +480,34 @@ export default function ExportModal({
           {activeTab === 'backup' && (
             <div className="space-y-5">
               
+              {/* Project Source Code Zip Download Section */}
+              <div className="space-y-2 bg-[#111111] border border-amber-500/20 p-4 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-amber-500/10 rounded-lg border border-amber-500/20 text-amber-400 shrink-0">
+                    <Download className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
+                      Complete Project Archive (.zip)
+                      <span className="text-[8px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold uppercase">
+                        Source Code
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-stone-400 leading-relaxed font-sans">
+                      Download the complete project source bundle (React, Vite, TypeScript, and Firebase configuration) directly to your Downloads folder.
+                    </p>
+                  </div>
+                </div>
+                
+                <a
+                  href="/ultra-ject5-project.zip"
+                  download="ultra-ject5-project.zip"
+                  className="w-full bg-amber-400 hover:bg-amber-300 active:scale-98 text-stone-950 font-bold py-2.5 rounded-lg text-xs transition-all flex items-center justify-center gap-2 focus:outline-none cursor-pointer shadow-md"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download Project (.zip) to Downloads
+                </a>
+              </div>
+
               {/* Back Up Section */}
               <div className="space-y-2 bg-[#111111] border border-white/[0.04] p-4 rounded-xl">
                 <div className="flex items-start gap-3">

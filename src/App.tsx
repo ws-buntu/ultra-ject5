@@ -10,10 +10,18 @@ import MilestonesTimeline from './components/MilestonesTimeline';
 import AnalyticsView from './components/AnalyticsView';
 import ExportModal from './components/ExportModal';
 import DailyFocus from './components/DailyFocus';
+import UserAccountModal from './components/UserAccountModal';
+import { useAuth } from './firebase/authContext';
+import { 
+  subscribeToUserProjects, 
+  saveProjectToFirestore, 
+  deleteProjectFromFirestore, 
+  migrateLocalProjectsToFirestore 
+} from './firebase/projectService';
 import { 
   Plus, Search, FolderKanban, SlidersHorizontal, 
   MapPin, Milestone, BarChart3, Bell, BellRing, AlertTriangle, Clock, X, Database, User, Archive,
-  Check, Settings, Smartphone, Zap, Sun, Moon
+  Check, Settings, Smartphone, Zap, Sun, Moon, Cloud
 } from 'lucide-react';
 import { calculateMomentumScore } from './utils/momentumUtils';
 import { getProjectDeadline, getEarlyWarningTimestamp, formatDeadlineDisplay } from './utils/deadlineUtils';
@@ -87,6 +95,45 @@ export default function App() {
   const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportInitialProject, setExportInitialProject] = useState<Project | null>(null);
+  
+  // Firebase Auth & Cloud Sync State
+  const { user } = useAuth();
+  const [showAccountModal, setShowAccountModal] = useState(false);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+
+  // Real-time Firestore sync & initial migration for authenticated user
+  useEffect(() => {
+    if (!user) return;
+
+    setIsCloudSyncing(true);
+
+    // If local projects exist, seed/migrate to Firestore on first sign-in
+    migrateLocalProjectsToFirestore(projects, user.uid)
+      .then((migratedCount) => {
+        if (migratedCount > 0) {
+          console.log(`[Firebase] Migrated ${migratedCount} projects to Firestore`);
+        }
+      })
+      .catch((err) => console.warn('[Firebase] Migration notice:', err))
+      .finally(() => setIsCloudSyncing(false));
+
+    // Subscribe to real-time updates from Firestore
+    const unsubscribe = subscribeToUserProjects(
+      user.uid,
+      (cloudProjects) => {
+        if (cloudProjects.length > 0) {
+          setProjects(cloudProjects);
+        }
+        setIsCloudSyncing(false);
+      },
+      (err) => {
+        console.warn('[Firebase] Projects sync notice:', err);
+        setIsCloudSyncing(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user?.uid]);
 
   // Sync projects state change to localStorage
   useEffect(() => {
@@ -316,12 +363,25 @@ export default function App() {
       newOrUpdatedProj.history = initialHistory;
       setProjects(prev => [...prev, newOrUpdatedProj]);
     }
+
+    // Sync to Firestore if authenticated
+    if (user) {
+      saveProjectToFirestore(newOrUpdatedProj, user.uid).catch((err) => {
+        console.error('[Firebase] Save project error:', err);
+      });
+    }
+
     setShowAddModal(false);
     setProjectToEdit(null);
   };
 
   const handleUpdateProjectDirect = (updatedProj: Project) => {
     setProjects(prev => prev.map(p => p.id === updatedProj.id ? updatedProj : p));
+    if (user) {
+      saveProjectToFirestore(updatedProj, user.uid).catch((err) => {
+        console.error('[Firebase] Update project error:', err);
+      });
+    }
   };
 
   const handleDuplicateProject = (projectToDuplicate: Project) => {
@@ -395,6 +455,11 @@ export default function App() {
   const handleDeleteProject = (projectId: string) => {
     setProjects(prev => prev.filter(p => p.id !== projectId));
     setSelectedProject(null);
+    if (user) {
+      deleteProjectFromFirestore(projectId).catch((err) => {
+        console.error('[Firebase] Delete project error:', err);
+      });
+    }
   };
 
   const triggerEditProject = () => {
@@ -820,6 +885,31 @@ export default function App() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                {/* Firebase Cloud Sync & Account trigger */}
+                <button
+                  id="firebase-account-header-btn"
+                  onClick={() => setShowAccountModal(true)}
+                  className={`p-1.5 rounded-lg border transition-all active:scale-95 flex items-center justify-center cursor-pointer relative ${
+                    user 
+                      ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-400' 
+                      : 'bg-[#121212] hover:bg-stone-800 border-white/[0.05] text-stone-400 hover:text-white'
+                  }`}
+                  title={user ? `Signed in as ${user.displayName || user.email} (Firebase Cloud Sync Active)` : 'Firebase Cloud Sync & Account'}
+                >
+                  {user?.photoURL ? (
+                    <img 
+                      src={user.photoURL} 
+                      alt="Account" 
+                      className="w-4 h-4 rounded-full object-cover" 
+                    />
+                  ) : (
+                    <Cloud className="w-4 h-4" />
+                  )}
+                  {user && (
+                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-stone-900" />
+                  )}
+                </button>
+
                 {/* Export / Backup Hub trigger */}
                 <button
                   onClick={() => {
@@ -1494,6 +1584,13 @@ export default function App() {
             onImportBackup={handleImportBackup}
           />
         )}
+
+        {/* FIREBASE AUTH & CLOUD SYNC MODAL */}
+        <UserAccountModal
+          isOpen={showAccountModal}
+          onClose={() => setShowAccountModal(false)}
+          projectsCount={projects.length}
+        />
 
         {/* QUICK SETTINGS NAVIGATION OPTIONS POPUP */}
         <AnimatePresence>
