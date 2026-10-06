@@ -21,4 +21,106 @@ body {
   color: #d6d3d1; /* stone-300 */
 }
 
+/* High-Contrast Light Mode System Overrides */
+#app-container.light-mode {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+#app-container.light-mode .bg-\[\#0a0a0a\],
+#app-container.light-mode .bg-\[\#0d0d0d\],
+#app-container.light-mode .bg-\[\#0f0f0f\],
+#app-container.light-mode .bg-\[\#111111\],
+#app-container.light-mode .bg-\[\#121212\],
+#app-container.light-mode .bg-\[\#131313\],
+#app-container.light-mode .bg-\[\#141414\],
+#app-container.light-mode .bg-\[\#161616\],
+#app-container.light-mode .bg-\[\#181818\],
+#app-container.light-mode .bg-\[\#1a1a1a\],
+#app-container.light-mode .bg-\[\#1e1e1e\],
+#app-container.light-mode .bg-stone-950,
+#app-container.light-mode .bg-stone-900 {
+  background-color: #ffffff !important;
+}
+
+#app-container.light-mode .bg-stone-900\/40,
+#app-container.light-mode .bg-stone-900\/60,
+#app-container.light-mode .bg-stone-900\/80,
+#app-container.light-mode .bg-stone-900\/90,
+#app-container.light-mode .bg-stone-950\/60,
+#app-container.light-mode .bg-stone-950\/80,
+#app-container.light-mode .bg-stone-950\/90,
+#app-container.light-mode .bg-\[\#121212\]\/95 {
+  background-color: #f1f5f9 !important;
+}
+
+#app-container.light-mode .bg-\[\#060606\]\/85 {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
+#app-container.light-mode .text-white,
+#app-container.light-mode .text-stone-100,
+#app-container.light-mode .text-stone-200,
+#app-container.light-mode .text-stone-300 {
+  color: #020617 !important;
+}
+
+#app-container.light-mode .text-stone-400,
+#app-container.light-mode .text-stone-500 {
+  color: #334155 !important;
+}
+
+#app-container.light-mode .text-stone-600 {
+  color: #475569 !important;
+}
+
+#app-container.light-mode .border-white\/\[0\.02\],
+#app-container.light-mode .border-white\/\[0\.03\],
+#app-container.light-mode .border-white\/\[0\.04\],
+#app-container.light-mode .border-white\/\[0\.05\],
+#app-container.light-mode .border-white\/\[0\.06\],
+#app-container.light-mode .border-white\/\[0\.08\],
+#app-container.light-mode .border-white\/10,
+#app-container.light-mode .border-white\/15,
+#app-container.light-mode .border-white\/20,
+#app-container.light-mode .border-stone-800,
+#app-container.light-mode .border-stone-900 {
+  border-color: #cbd5e1 !important;
+}
+
+#app-container.light-mode input,
+#app-container.light-mode textarea,
+#app-container.light-mode select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #94a3b8 !important;
+}
+
+#app-container.light-mode .bg-white {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+}
+
+#app-container.light-mode .bg-white:hover {
+  background-color: #1e293b !important;
+}
+
+#app-container.light-mode .text-amber-400 {
+  color: #d97706 !important;
+}
+
+#app-container.light-mode .text-amber-300 {
+  color: #b45309 !important;
+}
+
+#app-container.light-mode .bg-amber-500\/10 {
+  background-color: rgba(217, 119, 6, 0.12) !important;
+}
+
+#app-container.light-mode .border-amber-500\/20,
+#app-container.light-mode .border-amber-500\/30 {
+  border-color: rgba(217, 119, 6, 0.35) !important;
+}
+
+
 

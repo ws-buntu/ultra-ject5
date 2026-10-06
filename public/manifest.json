@@ -1,0 +1,25 @@
+{
+  "short_name": "Ultra-Ject5",
+  "name": "Ultra-Ject5 - Projects & Initiatives Tracker",
+  "description": "A sleek mobile-focused projects tracker to manage key projects, track progress on initiatives, and keep tabs on milestones.",
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "utilities"]
+}

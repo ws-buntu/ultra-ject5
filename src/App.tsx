@@ -9,11 +9,14 @@ import AddProjectModal from './components/AddProjectModal';
 import MilestonesTimeline from './components/MilestonesTimeline';
 import AnalyticsView from './components/AnalyticsView';
 import ExportModal from './components/ExportModal';
+import DailyFocus from './components/DailyFocus';
 import { 
   Plus, Search, FolderKanban, SlidersHorizontal, 
-  MapPin, Milestone, BarChart3, Bell, X, Database, User, Archive,
-  Check, Settings, Smartphone
+  MapPin, Milestone, BarChart3, Bell, BellRing, AlertTriangle, Clock, X, Database, User, Archive,
+  Check, Settings, Smartphone, Zap, Sun, Moon
 } from 'lucide-react';
+import { calculateMomentumScore } from './utils/momentumUtils';
+import { getProjectDeadline, getEarlyWarningTimestamp, formatDeadlineDisplay } from './utils/deadlineUtils';
 
 export default function App() {
   // Lazy state loader for persistent offline projects data
@@ -21,7 +24,26 @@ export default function App() {
     const saved = localStorage.getItem('ultra_jects5_projects');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((p: any) => ({
+            ...p,
+            name: p.name || 'Untitled Project',
+            description: p.description || '',
+            category: p.category || 'Development',
+            status: p.status || 'planning',
+            priority: p.priority || 'medium',
+            startDate: p.startDate || '2026-07-18',
+            endDate: p.endDate || '2026-09-30',
+            owner: p.owner || 'Project Lead',
+            initiatives: Array.isArray(p.initiatives) ? p.initiatives : [],
+            milestones: Array.isArray(p.milestones) ? p.milestones : [],
+            history: Array.isArray(p.history) ? p.history : [],
+            goals: Array.isArray(p.goals) ? p.goals : [],
+            tags: Array.isArray(p.tags) ? p.tags : [],
+            collaborators: Array.isArray(p.collaborators) ? p.collaborators : []
+          }));
+        }
       } catch (e) {
         console.error('Failed to parse saved projects', e);
       }
@@ -37,8 +59,10 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
   const [selectedCollaborator, setSelectedCollaborator] = useState<string>('All');
-  const [sortBy, setSortBy] = useState<'Name' | 'Deadline' | 'Priority'>('Deadline');
+  const [sortBy, setSortBy] = useState<'Name' | 'Deadline' | 'Priority' | 'Momentum'>('Deadline');
+  const [autoSortMomentum, setAutoSortMomentum] = useState<boolean>(false);
   const [showArchived, setShowArchived] = useState<boolean>(false);
+  const [searchArchivedOnly, setSearchArchivedOnly] = useState<boolean>(false);
 
   // Extract all team members across all projects dynamically
   const allTeamMembers = React.useMemo(() => {
@@ -84,20 +108,107 @@ export default function App() {
   // Active in-app notification toasts
   const [activeReminders, setActiveReminders] = useState<{
     id: string;
+    projectId?: string;
     projectName: string;
     message: string;
+    type?: 'reminder' | 'early_warning';
+    deadlineText?: string;
   }[]>([]);
 
-  // Background scheduler to poll and check reminders every 5 seconds
+  // Listen for custom toast notification triggers across components (e.g., test triggers or immediate alerts)
+  useEffect(() => {
+    const handleToastEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail) {
+        setActiveReminders(prev => [
+          ...prev,
+          {
+            id: customEvent.detail.id || `custom-toast-${Date.now()}`,
+            projectId: customEvent.detail.projectId,
+            projectName: customEvent.detail.projectName || 'Project',
+            message: customEvent.detail.message || 'Notification triggered',
+            type: customEvent.detail.type || 'early_warning',
+            deadlineText: customEvent.detail.deadlineText
+          }
+        ]);
+      }
+    };
+    window.addEventListener('ultra_jects_toast', handleToastEvent);
+    return () => window.removeEventListener('ultra_jects_toast', handleToastEvent);
+  }, []);
+
+  // Background scheduler to poll and check reminders & 24h early warnings every 5 seconds
   useEffect(() => {
     const checkScheduledReminders = () => {
       const now = new Date();
       let hasUpdates = false;
 
       const updatedProjects = projects.map(p => {
-        if (p.reminderDateTime && !p.reminderSent) {
+        let updatedProject = { ...p };
+        let projectModified = false;
+
+        const deadline = getProjectDeadline(p);
+        const deadlineTimeMs = deadline.getTime();
+
+        // 1. Check 24-Hour Early Warning Notification (toggled on, not yet sent, project active)
+        if (p.earlyWarningEnabled && !p.earlyWarningSent && p.status !== 'completed' && p.status !== 'archived') {
+          const earlyWarningTimeMs = getEarlyWarningTimestamp(deadline);
+          // Trigger when current time reaches 24 hours before the actual deadline (within a 48h active window)
+          if (now.getTime() >= earlyWarningTimeMs && now.getTime() <= deadlineTimeMs + 48 * 60 * 60 * 1000) {
+            const formattedDeadline = formatDeadlineDisplay(deadline);
+
+            // Trigger browser notification
+            if (typeof window !== 'undefined' && 'Notification' in window) {
+              if (Notification.permission === 'granted') {
+                try {
+                  new Notification(`⚡ 24h Early Warning: ${p.name}`, {
+                    body: `The deadline for "${p.name}" is in 24 hours (${formattedDeadline})! Check your milestones.`,
+                    icon: '/favicon.ico'
+                  });
+                } catch (err) {
+                  console.error('Browser Notification error:', err);
+                }
+              }
+            }
+
+            // Trigger custom early warning floating toast
+            setActiveReminders(prev => [
+              ...prev,
+              {
+                id: `early-warn-${Date.now()}-${p.id}`,
+                projectId: p.id,
+                projectName: p.name,
+                type: 'early_warning',
+                deadlineText: formattedDeadline,
+                message: `The deadline for "${p.name}" is approaching in 24 hours (${formattedDeadline}). Time to review pending milestones and wrap up deliverables.`
+              }
+            ]);
+
+            // Append to project activity log
+            const updatedHistory: ProjectActivity[] = [
+              {
+                id: `act-${Date.now()}-early-warning-fired`,
+                timestamp: new Date().toISOString(),
+                type: 'project_edited',
+                message: `⚠️ 24-Hour Early Warning notification triggered for deadline (${formattedDeadline})`
+              },
+              ...(p.history || [])
+            ];
+
+            updatedProject = {
+              ...updatedProject,
+              earlyWarningSent: true,
+              history: updatedHistory
+            };
+            projectModified = true;
+          }
+        }
+
+        // 2. Check scheduled deadline reminder (at exact target time)
+        if (p.reminderDateTime && !p.reminderSent && p.status !== 'completed' && p.status !== 'archived') {
           const remTime = new Date(p.reminderDateTime);
           if (now.getTime() >= remTime.getTime()) {
+            const formattedTime = p.reminderDateTime.replace('T', ' at ');
             // Trigger browser notification
             if (typeof window !== 'undefined' && 'Notification' in window) {
               if (Notification.permission === 'granted') {
@@ -112,13 +223,16 @@ export default function App() {
               }
             }
 
-            // Trigger beautiful in-app floating Toast
+            // Trigger floating Toast
             setActiveReminders(prev => [
               ...prev,
               {
                 id: `rem-toast-${Date.now()}-${p.id}`,
+                projectId: p.id,
                 projectName: p.name,
-                message: `The scheduled reminder for your initiative "${p.name}" has triggered! Time to review checkpoints.`
+                type: 'reminder',
+                deadlineText: formattedTime,
+                message: `The scheduled deadline reminder for your initiative "${p.name}" has triggered! Time to review final checkpoints.`
               }
             ]);
 
@@ -130,16 +244,21 @@ export default function App() {
                 type: 'project_edited',
                 message: '⏰ Scheduled deadline reminder triggered successfully',
               },
-              ...(p.history || [])
+              ...(updatedProject.history || p.history || [])
             ];
 
-            hasUpdates = true;
-            return {
-              ...p,
+            updatedProject = {
+              ...updatedProject,
               reminderSent: true,
               history: updatedHistory
             };
+            projectModified = true;
           }
+        }
+
+        if (projectModified) {
+          hasUpdates = true;
+          return updatedProject;
         }
         return p;
       });
@@ -289,11 +408,11 @@ export default function App() {
   const filteredProjects = projects.filter(project => {
     // Search query match
     const matchesSearch = 
-      project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      project.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      project.owner.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      project.initiatives.some(init => init.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      project.milestones.some(mile => mile.title.toLowerCase().includes(searchQuery.toLowerCase()));
+      (project.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (project.description || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (project.owner || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (project.initiatives || []).some(init => (init.title || '').toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (project.milestones || []).some(mile => (mile.title || '').toLowerCase().includes(searchQuery.toLowerCase()));
 
     // Category filter match
     const matchesCategory = selectedCategory === 'All' || project.category === selectedCategory;
@@ -303,10 +422,14 @@ export default function App() {
       project.owner.toLowerCase().includes(selectedCollaborator.toLowerCase()) ||
       project.collaborators?.some(c => c.toLowerCase() === selectedCollaborator.toLowerCase());
 
-    return matchesSearch && matchesCategory && matchesCollaborator;
+    // Search scope match: when searchArchivedOnly is true, restrict to archived projects
+    const matchesArchiveScope = !searchArchivedOnly || project.status === 'archived';
+
+    return matchesSearch && matchesCategory && matchesCollaborator && matchesArchiveScope;
   });
 
   const activeProjects = filteredProjects.filter(project => {
+    if (searchArchivedOnly) return false;
     const isNotArchived = project.status !== 'archived';
     const matchesStatus = selectedStatus === 'All' || project.status === selectedStatus;
     return isNotArchived && matchesStatus;
@@ -316,6 +439,15 @@ export default function App() {
     const pinB = b.pinned ? 1 : 0;
     if (pinB !== pinA) {
       return pinB - pinA;
+    }
+
+    if (autoSortMomentum || sortBy === 'Momentum') {
+      const scoreA = calculateMomentumScore(a);
+      const scoreB = calculateMomentumScore(b);
+      if (scoreB !== scoreA) {
+        return scoreB - scoreA;
+      }
+      return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
     }
 
     if (sortBy === 'Name') {
@@ -344,6 +476,15 @@ export default function App() {
   const archivedProjects = filteredProjects.filter(project => {
     return project.status === 'archived';
   }).sort((a, b) => {
+    if (autoSortMomentum || sortBy === 'Momentum') {
+      const scoreA = calculateMomentumScore(a);
+      const scoreB = calculateMomentumScore(b);
+      if (scoreB !== scoreA) {
+        return scoreB - scoreA;
+      }
+      return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
+    }
+
     if (sortBy === 'Name') {
       return a.name.localeCompare(b.name);
     }
@@ -374,7 +515,7 @@ export default function App() {
     projects.forEach(p => {
       // Exclude archived projects' milestones from overdue notifications
       if (p.status === 'archived') return;
-      p.milestones.forEach(m => {
+      (p.milestones || []).forEach(m => {
         if (!m.completed && new Date(m.date).getTime() < anchorDate.getTime()) {
           count++;
         }
@@ -390,7 +531,7 @@ export default function App() {
     let count = 0;
     projects.forEach(p => {
       if (p.status === 'archived') return;
-      p.milestones.forEach(m => {
+      (p.milestones || []).forEach(m => {
         if (!m.completed) {
           count++;
         }
@@ -420,6 +561,12 @@ export default function App() {
     return saved !== null ? saved === 'true' : true;
   });
 
+  // App Theme Mode State: 'dark' (default) | 'light' (high-contrast light mode)
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('app_theme_mode');
+    return (saved === 'light' || saved === 'dark') ? saved : 'dark';
+  });
+
   // Sync settings to localStorage
   useEffect(() => {
     localStorage.setItem('nav_pref_swipe_enabled', String(swipeEnabled));
@@ -432,6 +579,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('nav_pref_haptic_enabled', String(hapticEnabled));
   }, [hapticEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('app_theme_mode', themeMode);
+  }, [themeMode]);
 
   // Safe helper to trigger subtle haptic vibration on mobile with custom patterns
   const triggerHaptic = (pattern: number | number[] = 10) => {
@@ -557,10 +708,11 @@ export default function App() {
     if (nonArchived.length === 0) return 0;
     let totalProgress = 0;
     nonArchived.forEach(p => {
-      if (p.initiatives.length === 0) {
+      const inits = p.initiatives || [];
+      if (inits.length === 0) {
         totalProgress += p.status === 'completed' ? 100 : 0;
       } else {
-        const pProg = p.initiatives.reduce((acc, i) => acc + i.progress, 0) / p.initiatives.length;
+        const pProg = inits.reduce((acc, i) => acc + (i.progress || 0), 0) / inits.length;
         totalProgress += pProg;
       }
     });
@@ -569,46 +721,87 @@ export default function App() {
   const averageVelocity = getAverageVelocity();
 
   // Reset all filters easily
-  const hasActiveFilters = searchQuery !== '' || selectedCategory !== 'All' || selectedStatus !== 'All' || selectedCollaborator !== 'All' || showArchived;
+  const hasActiveFilters = searchQuery !== '' || selectedCategory !== 'All' || selectedStatus !== 'All' || selectedCollaborator !== 'All' || showArchived || searchArchivedOnly;
   const handleResetFilters = () => {
     setSearchQuery('');
     setSelectedCategory('All');
     setSelectedStatus('All');
     setSelectedCollaborator('All');
     setShowArchived(false);
+    setSearchArchivedOnly(false);
   };
 
   return (
     <PhoneFrame>
-      <div id="app-container" className="flex flex-col h-full bg-[#0a0a0a] relative text-stone-300">
+      <div 
+        id="app-container" 
+        className={`flex flex-col h-full min-h-0 relative text-stone-300 transition-colors duration-300 ${
+          themeMode === 'light' ? 'light-mode bg-slate-50 text-slate-900' : 'bg-[#0a0a0a]'
+        }`}
+      >
         
         {/* Floating Toast Notification Bar */}
         {activeReminders.length > 0 && (
           <div className="absolute top-4 left-4 right-4 z-[9999] space-y-2 pointer-events-auto">
-            {activeReminders.map(rem => (
-              <div 
-                key={rem.id} 
-                className="bg-stone-950/95 border border-amber-500/30 rounded-xl p-3.5 shadow-[0_10px_30px_rgba(0,0,0,0.5)] flex items-start gap-3 backdrop-blur-md transition-all duration-300"
-              >
-                <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 shrink-0 mt-0.5">
-                  <Bell className="w-4 h-4 animate-bounce" />
-                </div>
-                <div className="flex-1 space-y-1">
-                  <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-amber-400 block">
-                    ⏰ Local Deadline Reminder
-                  </span>
-                  <p className="text-xs text-white font-medium leading-normal">
-                    {rem.message}
-                  </p>
-                </div>
-                <button 
-                  onClick={() => setActiveReminders(prev => prev.filter(r => r.id !== rem.id))}
-                  className="p-1 text-stone-500 hover:text-stone-300 transition-colors cursor-pointer"
+            {activeReminders.map(rem => {
+              const isEarlyWarning = rem.type === 'early_warning';
+              return (
+                <div 
+                  key={rem.id} 
+                  className={`border rounded-xl p-3.5 shadow-[0_12px_32px_rgba(0,0,0,0.65)] flex items-start gap-3 backdrop-blur-md transition-all duration-300 ${
+                    isEarlyWarning
+                      ? 'bg-[#181105]/95 border-amber-400/60 shadow-amber-500/15'
+                      : 'bg-stone-950/95 border-amber-500/30'
+                  }`}
                 >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+                  <div className={`p-1.5 rounded-lg shrink-0 mt-0.5 ${
+                    isEarlyWarning ? 'bg-amber-400 text-stone-950 font-bold' : 'bg-amber-500/10 text-amber-400'
+                  }`}>
+                    {isEarlyWarning ? <AlertTriangle className="w-4 h-4 animate-bounce" /> : <Bell className="w-4 h-4 animate-bounce" />}
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] font-bold font-mono uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                        isEarlyWarning ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-amber-400'
+                      }`}>
+                        {isEarlyWarning ? '⚡ 24-Hour Early Warning' : '⏰ Local Deadline Reminder'}
+                      </span>
+                      {rem.deadlineText && (
+                        <span className="text-[9px] font-mono text-stone-400">
+                          Due: {rem.deadlineText}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-white font-medium leading-normal">
+                      {rem.message}
+                    </p>
+                    {rem.projectId && (
+                      <div className="pt-1 flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            const targetP = projects.find(p => p.id === rem.projectId);
+                            if (targetP) {
+                              setSelectedProject(targetP);
+                              setActiveReminders(prev => prev.filter(r => r.id !== rem.id));
+                            }
+                          }}
+                          className="text-[10px] font-mono font-bold text-amber-400 hover:text-amber-300 uppercase tracking-wider flex items-center gap-1 cursor-pointer underline decoration-amber-500/40"
+                        >
+                          View Initiative &rarr;
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button 
+                    onClick={() => setActiveReminders(prev => prev.filter(r => r.id !== rem.id))}
+                    className="p-1 text-stone-500 hover:text-stone-300 transition-colors cursor-pointer"
+                    title="Dismiss notification"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -633,10 +826,24 @@ export default function App() {
                     setExportInitialProject(null);
                     setShowExportModal(true);
                   }}
-                  className="p-1.5 rounded-lg bg-[#121212] hover:bg-stone-800 border border-white/[0.05] text-stone-400 hover:text-white transition-all active:scale-95 flex items-center justify-center"
+                  className="p-1.5 rounded-lg bg-[#121212] hover:bg-stone-800 border border-white/[0.05] text-stone-400 hover:text-white transition-all active:scale-95 flex items-center justify-center cursor-pointer"
                   title="Export & Backup Hub"
                 >
                   <Database className="w-4 h-4" />
+                </button>
+
+                {/* Quick Settings & Theme Switcher trigger */}
+                <button
+                  id="quick-settings-header-btn"
+                  onClick={() => {
+                    setQuickSettingsSourceTab(activeTab);
+                    setQuickSettingsOpen(true);
+                    triggerHaptic(10);
+                  }}
+                  className="p-1.5 rounded-lg bg-[#121212] hover:bg-stone-800 border border-white/[0.05] text-stone-400 hover:text-amber-400 transition-all active:scale-95 flex items-center justify-center cursor-pointer"
+                  title="Quick Settings & Preferences"
+                >
+                  <SlidersHorizontal className="w-4 h-4 text-amber-500" />
                 </button>
 
                 {/* Alert Badge for Overdue Milestones */}
@@ -686,21 +893,28 @@ export default function App() {
               </div>
             </div>
 
+            {/* Daily Focus Top Priority Goal Header Component */}
+            <DailyFocus />
+
             {/* Quick Search Bar */}
             <div className="px-5 pt-3 pb-1.5">
               <div className="relative w-full">
-                <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-stone-600" />
+                <Search className={`absolute left-3 top-2.5 w-3.5 h-3.5 ${searchArchivedOnly ? 'text-amber-400' : 'text-stone-600'}`} />
                 <input
                   type="text"
-                  placeholder="Search projects, subtasks..."
+                  placeholder={searchArchivedOnly ? "Search specifically in archived..." : "Search projects, subtasks..."}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-[#121212] border border-white/[0.06] rounded-lg pl-9 pr-8 py-2 text-xs text-stone-300 placeholder-stone-600 focus:outline-none focus:border-stone-500 transition-colors"
+                  className={`w-full bg-[#121212] border rounded-lg pl-9 pr-8 py-2 text-xs text-stone-300 placeholder-stone-600 focus:outline-none transition-colors ${
+                    searchArchivedOnly 
+                      ? 'border-amber-500/40 focus:border-amber-500/70' 
+                      : 'border-white/[0.06] focus:border-stone-500'
+                  }`}
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-2.5 p-0.5 rounded-full hover:bg-stone-800 text-stone-500 hover:text-stone-300"
+                    className="absolute right-2.5 top-2.5 p-0.5 rounded-full hover:bg-stone-800 text-stone-500 hover:text-stone-300 cursor-pointer"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -708,22 +922,52 @@ export default function App() {
               </div>
             </div>
 
-            {/* Sort & Collaborator Filters Row */}
+            {/* Sort, Auto-Sort Toggle & Collaborator Filters Row */}
             <div className="px-5 pb-2 flex gap-2 items-center select-none">
               {/* Sort Dropdown */}
               <div className="relative flex-1">
                 <select
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as 'Name' | 'Deadline' | 'Priority')}
+                  onChange={(e) => {
+                    const val = e.target.value as 'Name' | 'Deadline' | 'Priority' | 'Momentum';
+                    setSortBy(val);
+                    if (val === 'Momentum') {
+                      setAutoSortMomentum(true);
+                    } else {
+                      setAutoSortMomentum(false);
+                    }
+                  }}
                   className="w-full bg-[#121212] border border-white/[0.06] hover:border-white/[0.12] rounded-lg pl-8 pr-7 py-1.5 text-xs text-stone-400 hover:text-stone-200 focus:outline-none focus:border-stone-500 transition-all cursor-pointer font-sans appearance-none select-none"
                   title="Sort Projects"
                 >
-                  <option value="Deadline" className="bg-[#121212]">Deadline</option>
-                  <option value="Name" className="bg-[#121212]">Name</option>
-                  <option value="Priority" className="bg-[#121212]">Priority</option>
+                  <option value="Deadline" className="bg-[#121212]">Sort: Deadline</option>
+                  <option value="Name" className="bg-[#121212]">Sort: Name</option>
+                  <option value="Priority" className="bg-[#121212]">Sort: Priority</option>
+                  <option value="Momentum" className="bg-[#121212]">Sort: Momentum Score ⚡</option>
                 </select>
                 <SlidersHorizontal className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-stone-500 pointer-events-none" />
               </div>
+
+              {/* Automated Momentum Sorting Toggle Switch */}
+              <button
+                type="button"
+                onClick={() => {
+                  const nextState = !autoSortMomentum;
+                  setAutoSortMomentum(nextState);
+                  if (nextState) {
+                    setSortBy('Momentum');
+                  }
+                }}
+                className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+                  autoSortMomentum || sortBy === 'Momentum'
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-sm shadow-amber-500/5'
+                    : 'bg-[#121212] border-white/[0.06] text-stone-500 hover:text-stone-300 hover:border-white/[0.12]'
+                }`}
+                title="Toggle Automated Sorting by Momentum Score (calculates deadline proximity, initiative progress %, and priority level)"
+              >
+                <Zap className={`w-3.5 h-3.5 ${autoSortMomentum || sortBy === 'Momentum' ? 'text-amber-400 fill-amber-400/20' : 'text-stone-500'}`} />
+                <span className="hidden sm:inline">Auto-Sort</span>
+              </button>
 
               {/* Collaborator Filter Dropdown */}
               <div className="relative flex-1">
@@ -787,21 +1031,43 @@ export default function App() {
             </div>
 
             {/* Archive Toggle Row */}
-            <div className="px-5 pb-3 flex items-center justify-between select-none">
+            <div className="px-5 pb-3 flex items-center justify-between gap-2 select-none">
               <span className="text-[10px] uppercase tracking-wider text-stone-500 font-bold font-mono">
                 Initiative Stream
               </span>
-              <button
-                onClick={() => setShowArchived(!showArchived)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold border transition-all ${
-                  showArchived 
-                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
-                    : 'bg-[#121212] border-white/[0.04] text-stone-500 hover:text-stone-300'
-                }`}
-              >
-                <Archive className="w-3.5 h-3.5" />
-                {showArchived ? 'Hide Archived' : 'Show Archived'}
-              </button>
+
+              <div className="flex items-center gap-1.5">
+                {showArchived && (
+                  <button
+                    onClick={() => setSearchArchivedOnly(!searchArchivedOnly)}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold border transition-all cursor-pointer ${
+                      searchArchivedOnly 
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm' 
+                        : 'bg-[#121212] border-white/[0.06] text-stone-500 hover:text-stone-300'
+                    }`}
+                    title="Restrict search to archived projects only"
+                  >
+                    <Search className="w-3 h-3 text-amber-400" />
+                    {searchArchivedOnly ? 'Scope: Archived Only' : 'Scope: All'}
+                  </button>
+                )}
+
+                <button
+                  onClick={() => {
+                    const nextVal = !showArchived;
+                    setShowArchived(nextVal);
+                    if (!nextVal) setSearchArchivedOnly(false);
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold border transition-all cursor-pointer ${
+                    showArchived 
+                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
+                      : 'bg-[#121212] border-white/[0.04] text-stone-500 hover:text-stone-300'
+                  }`}
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                  {showArchived ? 'Hide Archived' : 'Show Archived'}
+                </button>
+              </div>
             </div>
 
             {/* Project Cards Stream List */}
@@ -1250,14 +1516,14 @@ export default function App() {
                 <div className="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between bg-stone-900/40 select-none">
                   <div className="flex items-center gap-2">
                     <SlidersHorizontal className="w-3.5 h-3.5 text-amber-500" />
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-stone-200">Navigation Preferences</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-stone-200">Quick Settings & Preferences</span>
                   </div>
                   <button
                     onClick={() => {
                       setQuickSettingsOpen(false);
                       triggerHaptic(5);
                     }}
-                    className="p-1 rounded-lg text-stone-400 hover:text-white hover:bg-white/[0.05] transition-colors"
+                    className="p-1 rounded-lg text-stone-400 hover:text-white hover:bg-white/[0.05] transition-colors cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -1266,8 +1532,61 @@ export default function App() {
                 {/* Preferences List */}
                 <div className="p-4 space-y-4 select-none">
                   <p className="text-[10px] text-stone-400 leading-normal bg-[#161616] p-2.5 rounded-xl border border-white/[0.02]">
-                    Configuring preferences via <span className="text-amber-500 font-semibold">{quickSettingsSourceTab === 'projects' ? 'Initiatives' : quickSettingsSourceTab === 'timeline' ? 'Milestones' : 'Analytics'}</span> tab button.
+                    Configuring preferences via <span className="text-amber-500 font-semibold">{quickSettingsSourceTab === 'projects' ? 'Initiatives' : quickSettingsSourceTab === 'timeline' ? 'Milestones' : 'Analytics'}</span> menu.
                   </p>
+
+                  {/* Switch 0: App Theme Switcher */}
+                  <div className="flex items-center justify-between pb-3 border-b border-white/[0.04]" id="quick-settings-theme-switcher">
+                    <div className="flex flex-col gap-0.5 max-w-[140px]">
+                      <span className="text-[11px] font-semibold text-stone-200 flex items-center gap-1.5">
+                        {themeMode === 'light' ? (
+                          <Sun className="w-3.5 h-3.5 text-amber-500" />
+                        ) : (
+                          <Moon className="w-3.5 h-3.5 text-amber-400" />
+                        )}
+                        Appearance
+                      </span>
+                      <span className="text-[9px] text-stone-500 leading-tight">
+                        {themeMode === 'light' ? 'High-Contrast Light Mode' : 'Default Dark Mode'}
+                      </span>
+                    </div>
+                    
+                    {/* Theme Mode Toggle Pill Buttons */}
+                    <div className="flex items-center p-0.5 bg-stone-900 border border-white/[0.08] rounded-lg gap-0.5">
+                      <button
+                        id="theme-toggle-dark-btn"
+                        onClick={() => {
+                          setThemeMode('dark');
+                          triggerHaptic(10);
+                        }}
+                        className={`px-2 py-1 rounded-md text-[9px] font-bold font-mono transition-all flex items-center gap-1 cursor-pointer ${
+                          themeMode === 'dark'
+                            ? 'bg-amber-500 text-stone-950 shadow-sm'
+                            : 'text-stone-400 hover:text-stone-200'
+                        }`}
+                        title="Set to Default Dark Mode"
+                      >
+                        <Moon className="w-2.5 h-2.5" />
+                        Dark
+                      </button>
+                      <button
+                        id="theme-toggle-light-btn"
+                        onClick={() => {
+                          setThemeMode('light');
+                          triggerHaptic(10);
+                        }}
+                        className={`px-2 py-1 rounded-md text-[9px] font-bold font-mono transition-all flex items-center gap-1 cursor-pointer ${
+                          themeMode === 'light'
+                            ? 'bg-amber-500 text-stone-950 shadow-sm'
+                            : 'text-stone-400 hover:text-stone-200'
+                        }`}
+                        title="Set to High-Contrast Light Mode"
+                      >
+                        <Sun className="w-2.5 h-2.5" />
+                        Light
+                      </button>
+                    </div>
+                  </div>
 
                   {/* Switch 1: Swipe Gestures */}
                   <div className="flex items-center justify-between">
@@ -1345,6 +1664,42 @@ export default function App() {
                         transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                       />
                     </button>
+                  </div>
+
+                  {/* Feature: 24h Early Warning Toast Demo */}
+                  <div className="pt-3 border-t border-white/[0.04] space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col gap-0.5 max-w-[160px]">
+                        <span className="text-[11px] font-semibold text-stone-200 flex items-center gap-1.5">
+                          <AlertTriangle className="w-3 h-3 text-amber-400" />
+                          24h Early Warning
+                        </span>
+                        <span className="text-[9px] text-stone-500 leading-tight">Test and preview custom 24-hour deadline alert toast</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const activeP = projects.find(p => p.status === 'active') || projects[0];
+                          if (activeP) {
+                            setActiveReminders(prev => [
+                              ...prev,
+                              {
+                                id: `early-warn-demo-${Date.now()}`,
+                                projectId: activeP.id,
+                                projectName: activeP.name,
+                                type: 'early_warning',
+                                deadlineText: activeP.reminderDateTime?.replace('T', ' at ') || `${activeP.endDate} at 18:00`,
+                                message: `The deadline for "${activeP.name}" is approaching in 24 hours! Prepare final deliverables and verify milestones.`
+                              }
+                            ]);
+                            triggerHaptic([15, 40]);
+                            setQuickSettingsOpen(false);
+                          }
+                        }}
+                        className="px-2 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer"
+                      >
+                        Fire Toast
+                      </button>
+                    </div>
                   </div>
                 </div>
 

@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Project, Initiative, Milestone, ProjectStatus, ProjectPriority, ProjectActivity } from '../types';
+import { Project, Initiative, Milestone, ProjectStatus, ProjectPriority, ProjectActivity, ProjectGoal } from '../types';
+import ActivityLog from './ActivityLog';
+import ProjectNotesTab from './ProjectNotesTab';
+import { getTagStyle } from '../utils/tagUtils';
+import { normalizeGoals } from '../utils/goalUtils';
+import { getInitials, getAvatarColor } from '../utils/avatarUtils';
 import { 
   X, Plus, Trash2, Check, Clock, Calendar, 
-  User, CheckSquare, Square, AlertCircle, Sparkles, 
-  ChevronRight, Edit, AlertOctagon, CornerDownRight, Download,
+  User, CheckSquare, Square, AlertCircle, AlertTriangle, Sparkles, 
+  ChevronRight, Edit, AlertOctagon, CornerDownRight, Download, Share2,
   Activity, History, Milestone as MilestoneIcon, Percent, Tag, Users,
-  Bold, Italic, Heading, List, Code, Link, Eye, FileText
+  Bold, Italic, Heading, List, Code, Link, Eye, FileText, Copy, StickyNote, BookOpen,
+  Archive, ArchiveRestore, CheckCircle2, Target, BarChart3, Bell, Zap
 } from 'lucide-react';
+import { dispatchEarlyWarningToast } from '../utils/deadlineUtils';
 
 interface ProjectModalProps {
   project: Project;
@@ -31,10 +38,33 @@ const RichTextRenderer = ({ content }: { content: string }) => {
   const flushList = (key: string | number) => {
     if (currentListItems.length > 0) {
       elements.push(
-        <ul key={`list-${key}`} className="list-disc pl-5 my-2.5 space-y-1.5 font-sans text-xs text-stone-300">
-          {currentListItems.map((item, i) => (
-            <li key={`li-${i}`}>{renderInline(item)}</li>
-          ))}
+        <ul key={`list-${key}`} className="my-2.5 space-y-1.5 font-sans text-xs text-stone-300">
+          {currentListItems.map((item, i) => {
+            const isChecked = item.startsWith('[x] ') || item.startsWith('[X] ');
+            const isUnchecked = item.startsWith('[ ] ');
+            if (isChecked || isUnchecked) {
+              const textContent = item.substring(4);
+              return (
+                <li key={`li-${i}`} className="flex items-start gap-2 list-none">
+                  <span className={`inline-flex items-center justify-center w-3.5 h-3.5 rounded shrink-0 mt-0.5 border text-[9px] ${
+                    isChecked 
+                      ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400 font-bold' 
+                      : 'bg-stone-900 border-stone-700 text-stone-500'
+                  }`}>
+                    {isChecked ? '✓' : ''}
+                  </span>
+                  <span className={isChecked ? 'line-through text-stone-500' : ''}>
+                    {renderInline(textContent)}
+                  </span>
+                </li>
+              );
+            }
+            return (
+              <li key={`li-${i}`} className="list-disc ml-5">
+                {renderInline(item)}
+              </li>
+            );
+          })}
         </ul>
       );
       currentListItems = [];
@@ -217,8 +247,8 @@ export default function ProjectModal({
   onEditProjectClick,
   onExportProject
 }: ProjectModalProps) {
-  // Tabs: 'initiatives' or 'milestones' or 'activity' or 'summary'
-  const [activeSubTab, setActiveSubTab] = useState<'initiatives' | 'milestones' | 'activity' | 'summary'>('summary');
+  // Tabs: 'initiatives' | 'milestones' | 'activity' | 'summary' | 'notes'
+  const [activeSubTab, setActiveSubTab] = useState<'initiatives' | 'milestones' | 'activity' | 'summary' | 'notes'>('summary');
   const [hoveredPoint, setHoveredPoint] = useState<any>(null);
 
   // Input states for creating initiative
@@ -234,88 +264,12 @@ export default function ProjectModal({
   // Confirm Delete safety
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // Notes inline editing states
-  const [isEditingNotes, setIsEditingNotes] = useState(false);
-  const [editedNotes, setEditedNotes] = useState(project.notes || '');
-  const [editorMode, setEditorMode] = useState<'write' | 'preview'>('write');
-  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  // Archive & Haptic state
+  const [archiveToast, setArchiveToast] = useState<{ show: boolean; message: string; action: 'archive' | 'unarchive' } | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
 
-  const insertFormat = (formatType: 'bold' | 'italic' | 'heading' | 'list' | 'code' | 'link') => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const text = editedNotes;
-    const selectedText = text.substring(start, end);
-
-    let replacement = '';
-    let newCursorPos = start;
-
-    switch (formatType) {
-      case 'bold':
-        replacement = `**${selectedText || 'bold text'}**`;
-        newCursorPos = start + (selectedText ? replacement.length : 2);
-        break;
-      case 'italic':
-        replacement = `*${selectedText || 'italic text'}*`;
-        newCursorPos = start + (selectedText ? replacement.length : 1);
-        break;
-      case 'heading':
-        replacement = `\n# ${selectedText || 'Heading'}\n`;
-        newCursorPos = start + replacement.length - 1;
-        break;
-      case 'list':
-        replacement = `\n- ${selectedText || 'List item'}\n`;
-        newCursorPos = start + replacement.length - 1;
-        break;
-      case 'code':
-        replacement = `\`${selectedText || 'code'}\``;
-        newCursorPos = start + (selectedText ? replacement.length : 1);
-        break;
-      case 'link':
-        replacement = `[${selectedText || 'Link text'}](https://example.com)`;
-        newCursorPos = start + (selectedText ? replacement.length : 1);
-        break;
-      default:
-        return;
-    }
-
-    const newText = text.substring(0, start) + replacement + text.substring(end);
-    setEditedNotes(newText);
-
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(newCursorPos, newCursorPos);
-    }, 0);
-  };
-
-  useEffect(() => {
-    setEditedNotes(project.notes || '');
-    setIsEditingNotes(false);
-    setEditorMode('write');
-  }, [project.id, project.notes]);
-
-  const handleSaveNotes = () => {
-    const trimmedNotes = editedNotes.trim();
-    
-    const updatedHistory: ProjectActivity[] = [
-      {
-        id: `act-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        type: 'project_edited',
-        message: 'Project notes updated',
-      },
-      ...(project.history || [])
-    ];
-
-    onUpdateProject({
-      ...project,
-      notes: trimmedNotes,
-      history: updatedHistory
-    });
-    setIsEditingNotes(false);
-  };
+  // Web Share API Toast state
+  const [shareToast, setShareToast] = useState<{ show: boolean; message: string } | null>(null);
 
   const [isEditingTags, setIsEditingTags] = useState(false);
   const [modalCustomTagInput, setModalCustomTagInput] = useState('');
@@ -429,6 +383,88 @@ export default function ProjectModal({
       e.stopPropagation();
       handleAddCollaboratorInModal();
     }
+  };
+
+  // --- PROJECT GOALS STATE & HANDLERS ---
+  const [newGoalInput, setNewGoalInput] = useState('');
+
+  const normalizedGoals = normalizeGoals(project.goals);
+  const completedGoalsCount = normalizedGoals.filter(g => g.completed).length;
+  const goalProgressPercent = normalizedGoals.length > 0 
+    ? Math.round((completedGoalsCount / normalizedGoals.length) * 100) 
+    : 0;
+
+  const handleToggleGoalInModal = (goalId: string) => {
+    const current = normalizeGoals(project.goals);
+    const target = current.find(g => g.id === goalId);
+    if (!target) return;
+
+    const nextCompleted = !target.completed;
+    const updated = current.map(g => g.id === goalId ? { ...g, completed: nextCompleted } : g);
+
+    onUpdateProject({
+      ...project,
+      goals: updated,
+      history: [
+        {
+          id: `act-${Date.now()}-goal-toggle`,
+          timestamp: new Date().toISOString(),
+          type: 'project_edited',
+          message: `Goal "${target.text}" marked as ${nextCompleted ? 'completed' : 'incomplete'}`
+        },
+        ...(project.history || [])
+      ]
+    });
+  };
+
+  const handleAddGoalInModal = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = newGoalInput.trim();
+    if (!trimmed) return;
+
+    const current = normalizeGoals(project.goals);
+    const newGoalObj: ProjectGoal = {
+      id: `goal-${Date.now()}`,
+      text: trimmed,
+      completed: false
+    };
+
+    const updated = [...current, newGoalObj];
+    setNewGoalInput('');
+
+    onUpdateProject({
+      ...project,
+      goals: updated,
+      history: [
+        {
+          id: `act-${Date.now()}-goal-add`,
+          timestamp: new Date().toISOString(),
+          type: 'project_edited',
+          message: `Added goal "${trimmed}"`
+        },
+        ...(project.history || [])
+      ]
+    });
+  };
+
+  const handleRemoveGoalInModal = (goalId: string) => {
+    const current = normalizeGoals(project.goals);
+    const target = current.find(g => g.id === goalId);
+    const updated = current.filter(g => g.id !== goalId);
+
+    onUpdateProject({
+      ...project,
+      goals: updated,
+      history: [
+        {
+          id: `act-${Date.now()}-goal-remove`,
+          timestamp: new Date().toISOString(),
+          type: 'project_edited',
+          message: `Removed goal "${target?.text || 'Goal'}"`
+        },
+        ...(project.history || [])
+      ]
+    });
   };
 
   const anchorDate = new Date('2026-07-18');
@@ -725,7 +761,10 @@ export default function ProjectModal({
   // Calculations
   const calculateProgress = () => {
     if (!project.initiatives || project.initiatives.length === 0) return 0;
-    const total = project.initiatives.reduce((acc, init) => acc + init.progress, 0);
+    const total = project.initiatives.reduce((acc, init) => {
+      const val = init.completed ? 100 : Math.min(100, Math.max(0, init.progress || 0));
+      return acc + val;
+    }, 0);
     return Math.round(total / project.initiatives.length);
   };
 
@@ -747,10 +786,47 @@ export default function ProjectModal({
 
   const totalMilestones = project.milestones.length;
   const completedMilestones = project.milestones.filter(m => m.completed).length;
+  const remainingMilestones = Math.max(0, totalMilestones - completedMilestones);
 
   const milestoneCompletionPercentage = totalMilestones > 0 
     ? Math.round((completedMilestones / totalMilestones) * 100) 
     : 0;
+
+  const totalInitiatives = project.initiatives ? project.initiatives.length : 0;
+  const completedInitiativesCount = project.initiatives 
+    ? project.initiatives.filter(i => i.completed || i.progress >= 100).length 
+    : 0;
+  const remainingInitiatives = Math.max(0, totalInitiatives - completedInitiativesCount);
+  const initiativeCompletionPercentage = totalInitiatives > 0
+    ? Math.round((completedInitiativesCount / totalInitiatives) * 100)
+    : 0;
+
+  // Web Share API handler to share project details & progress text summary
+  const handleShareProject = async () => {
+    const shareTitle = `Project: ${project.name}`;
+    const shareText = `📌 Project: ${project.name}\n🏷️ Category: ${project.category} | Status: ${project.status.toUpperCase()} | Priority: ${project.priority.toUpperCase()}\n📊 Overall Progress: ${overallProgress}%\n🎯 Milestones: ${completedMilestones}/${totalMilestones} Completed (${remainingMilestones} Remaining)\n⚡ Initiatives: ${completedInitiativesCount}/${totalInitiatives} Completed (${remainingInitiatives} Remaining)\n📅 Deadline: ${project.endDate}\n\nOverview: ${project.description || 'No description provided'}`;
+    
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: window.location.href,
+        });
+        return;
+      } catch (err) {
+        // Fallback to clipboard if share fail/cancelled
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setShareToast({ show: true, message: 'Project Summary & Statistics Copied to Clipboard!' });
+      setTimeout(() => setShareToast(null), 3200);
+    } catch (err) {
+      console.error('Clipboard copy failed:', err);
+    }
+  };
 
   const getClosestUpcomingMilestoneDays = () => {
     const today = new Date();
@@ -778,6 +854,78 @@ export default function ProjectModal({
     return found ? { days: minDays, title: closestMilestone?.title } : null;
   };
 
+  const getStatusBadgeStyle = (status: ProjectStatus) => {
+    switch (status) {
+      case 'active':
+        return { label: 'Active', bg: 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400', dot: 'bg-emerald-400' };
+      case 'planning':
+        return { label: 'Planning', bg: 'bg-blue-500/10 border-blue-500/20 text-blue-400', dot: 'bg-blue-400' };
+      case 'on-hold':
+        return { label: 'On Hold', bg: 'bg-amber-500/10 border-amber-500/20 text-amber-400', dot: 'bg-amber-400' };
+      case 'completed':
+        return { label: 'Completed', bg: 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300', dot: 'bg-emerald-400' };
+      case 'archived':
+        return { label: 'Archived', bg: 'bg-stone-800 border-stone-700 text-amber-400', dot: 'bg-amber-400' };
+      default:
+        return { label: status, bg: 'bg-stone-900 border-stone-800 text-stone-400', dot: 'bg-stone-500' };
+    }
+  };
+  const statusStyles = getStatusBadgeStyle(project.status);
+
+  // Archive project handler with haptic feedback & confirmation
+  const handleArchiveProject = () => {
+    setIsArchiving(true);
+
+    // Trigger Mobile/Touch Haptic Feedback Vibration Pattern if supported
+    if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
+      try {
+        navigator.vibrate([35, 45, 35, 55]);
+      } catch {
+        // Silently handle environment missing vibration support
+      }
+    }
+
+    const isCurrentlyArchived = project.status === 'archived';
+    const newStatus: ProjectStatus = isCurrentlyArchived ? 'active' : 'archived';
+
+    const activityMsg = isCurrentlyArchived 
+      ? `Project restored from archive to "${newStatus}"`
+      : `Project archived (status changed to "archived")`;
+
+    const updatedHistory: ProjectActivity[] = [
+      {
+        id: `act-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        type: 'status_change',
+        message: activityMsg,
+        details: isCurrentlyArchived 
+          ? 'Project restored to active tracking.' 
+          : 'Project moved to archive storage via dedicated modal action.'
+      },
+      ...(project.history || [])
+    ];
+
+    onUpdateProject({
+      ...project,
+      status: newStatus,
+      history: updatedHistory
+    });
+
+    setArchiveToast({
+      show: true,
+      message: isCurrentlyArchived ? 'Project Restored from Archive' : 'Project Moved to Archive',
+      action: isCurrentlyArchived ? 'unarchive' : 'archive'
+    });
+
+    setTimeout(() => {
+      setIsArchiving(false);
+    }, 600);
+
+    setTimeout(() => {
+      setArchiveToast(null);
+    }, 3200);
+  };
+
   const upcomingMilestoneInfo = getClosestUpcomingMilestoneDays();
 
   return (
@@ -803,12 +951,38 @@ export default function ProjectModal({
                 <span className={`w-1 h-1 rounded-full ${prioStyles.dot}`} />
                 {prioStyles.label}
               </span>
+              <span className={`px-1.5 py-0.5 rounded text-[8px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 border ${statusStyles.bg}`}>
+                <span className={`w-1 h-1 rounded-full ${statusStyles.dot}`} />
+                {statusStyles.label}
+              </span>
             </div>
             <h2 className="font-serif font-light text-xl text-white leading-tight mt-0.5">
               {project.name}
             </h2>
+            {totalInitiatives > 0 && (
+              <div className="flex items-center gap-2 mt-1.5" title={`Average Initiative Completion: ${overallProgress}% across ${totalInitiatives} initiatives`}>
+                <div className="w-36 h-1.5 bg-stone-900 rounded-full overflow-hidden border border-white/[0.06] shrink-0">
+                  <div 
+                    className="h-full bg-gradient-to-r from-amber-500 via-emerald-400 to-teal-400 rounded-full transition-all duration-500" 
+                    style={{ width: `${overallProgress}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-mono text-amber-400 font-bold">
+                  {overallProgress}% avg progress
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <button 
+              onClick={handleShareProject} 
+              className="px-2.5 py-1.5 rounded-lg bg-[#121212] hover:bg-stone-800 border border-white/[0.05] text-stone-300 hover:text-amber-400 transition-all focus:outline-none flex items-center gap-1.5 text-xs font-mono font-medium cursor-pointer"
+              title="Share Project Summary via Web Share API or Copy to Clipboard"
+              id="share-project-btn"
+            >
+              <Share2 className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Share</span>
+            </button>
             {onExportProject && (
               <button 
                 onClick={() => onExportProject(project)} 
@@ -827,8 +1001,117 @@ export default function ProjectModal({
           </div>
         </div>
 
+        {/* Web Share Toast Banner */}
+        {shareToast && (
+          <div className="mx-6 mt-3 bg-[#161616] border border-amber-500/40 text-amber-300 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs font-mono font-bold animate-pulse shadow-xl transition-all">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-amber-400 text-stone-950 flex items-center justify-center font-bold text-xs shrink-0 animate-bounce">
+                <Check className="w-3 h-3 stroke-[3]" />
+              </div>
+              <span className="text-stone-100">{shareToast.message}</span>
+            </div>
+            <span className="text-[9px] uppercase tracking-widest text-amber-400 font-bold bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 flex items-center gap-1">
+              <Sparkles className="w-2.5 h-2.5 text-amber-400" /> Web Share API Ready
+            </span>
+          </div>
+        )}
+
+        {/* Archive Confirmation Haptic Toast Banner */}
+        {archiveToast && (
+          <div className="mx-6 mt-3 bg-[#161616] border border-amber-500/40 text-amber-300 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs font-mono font-bold animate-pulse shadow-xl transition-all">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-amber-400 text-stone-950 flex items-center justify-center font-bold text-xs shrink-0 animate-bounce">
+                <Check className="w-3 h-3 stroke-[3]" />
+              </div>
+              <span className="text-stone-100">{archiveToast.message}</span>
+            </div>
+            <span className="text-[9px] uppercase tracking-widest text-amber-400 font-bold bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 flex items-center gap-1">
+              <Sparkles className="w-2.5 h-2.5 text-amber-400" /> Haptic Feedback Confirmed
+            </span>
+          </div>
+        )}
+
         {/* Scrollable Body Content */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5 no-scrollbar">
+
+          {/* Project Statistics Summary Widget */}
+          <div id="project-statistics-widget" className="bg-gradient-to-br from-[#131313] to-[#0d0d0d] border border-white/[0.06] rounded-xl p-4 space-y-3.5 shadow-md select-none">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                  <BarChart3 className="w-3.5 h-3.5" />
+                </div>
+                <h3 className="text-xs font-mono font-bold text-stone-200 uppercase tracking-wider">
+                  Project Statistics
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono text-stone-400 bg-stone-900 border border-white/[0.05] px-2 py-0.5 rounded font-medium">
+                {completedMilestones + completedInitiativesCount} of {totalMilestones + totalInitiatives} Items Cleared
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-0.5">
+              {/* Milestones Stats Breakdown */}
+              <div className="bg-[#161616] border border-white/[0.04] rounded-lg p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-stone-400 flex items-center gap-1">
+                    <MilestoneIcon className="w-3 h-3 text-amber-400" /> Milestones
+                  </span>
+                  <span className="text-[10px] font-mono text-amber-400 font-bold">
+                    {milestoneCompletionPercentage}%
+                  </span>
+                </div>
+
+                <div className="w-full h-1.5 bg-stone-900 rounded-full overflow-hidden border border-white/[0.04]">
+                  <div 
+                    className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 rounded-full transition-all duration-500" 
+                    style={{ width: `${milestoneCompletionPercentage}%` }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-center pt-1 font-mono">
+                  <div className="bg-stone-900/60 p-1.5 rounded border border-white/[0.03]">
+                    <span className="text-[9px] text-emerald-400 font-bold block uppercase">Completed</span>
+                    <span className="text-xs font-bold text-white">{completedMilestones}</span>
+                  </div>
+                  <div className="bg-stone-900/60 p-1.5 rounded border border-white/[0.03]">
+                    <span className="text-[9px] text-stone-500 font-bold block uppercase">Remaining</span>
+                    <span className="text-xs font-bold text-stone-300">{remainingMilestones}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Initiatives Stats Breakdown */}
+              <div className="bg-[#161616] border border-white/[0.04] rounded-lg p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-stone-400 flex items-center gap-1">
+                    <CheckSquare className="w-3 h-3 text-emerald-400" /> Initiatives (Avg Completion)
+                  </span>
+                  <span className="text-[10px] font-mono text-emerald-400 font-bold" title="Average completion percentage across internal initiatives">
+                    {overallProgress}% avg
+                  </span>
+                </div>
+
+                <div className="w-full h-1.5 bg-stone-900 rounded-full overflow-hidden border border-white/[0.04]" title={`Average Initiative Completion: ${overallProgress}%`}>
+                  <div 
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500" 
+                    style={{ width: `${overallProgress}%` }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-center pt-1 font-mono">
+                  <div className="bg-stone-900/60 p-1.5 rounded border border-white/[0.03]">
+                    <span className="text-[9px] text-emerald-400 font-bold block uppercase">Completed</span>
+                    <span className="text-xs font-bold text-white">{completedInitiativesCount}</span>
+                  </div>
+                  <div className="bg-stone-900/60 p-1.5 rounded border border-white/[0.03]">
+                    <span className="text-[9px] text-stone-500 font-bold block uppercase">Remaining</span>
+                    <span className="text-xs font-bold text-stone-300">{remainingInitiatives}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
           
           {/* Milestone Summary Card */}
           <div id="milestone-summary-card" className="bg-gradient-to-br from-[#141414] to-[#0f0f0f] border border-white/[0.06] rounded-xl p-4 space-y-3 shadow-md select-none">
@@ -938,6 +1221,80 @@ export default function ProjectModal({
             </div>
           </div>
 
+          {/* Deadline Reminder & 24-Hour Early Warning Section */}
+          <div className="bg-gradient-to-br from-[#141414] to-[#0d0d0d] border border-white/[0.08] rounded-xl p-4 space-y-3 shadow-md select-none">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className={`p-2 rounded-lg ${project.earlyWarningEnabled ? 'bg-amber-500/20 text-amber-400' : 'bg-stone-900 text-stone-500'}`}>
+                  <Bell className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-mono font-bold text-stone-200 uppercase tracking-wider flex items-center gap-2">
+                    Deadline Reminder & Alerts
+                    {project.earlyWarningEnabled && (
+                      <span className="text-[8px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold uppercase tracking-wider">
+                        ⚡ 24h Alert Active
+                      </span>
+                    )}
+                  </h4>
+                  <p className="text-[10px] text-stone-400 font-mono">
+                    Target: <span className="text-stone-200 font-semibold">{project.reminderDateTime ? project.reminderDateTime.replace('T', ' at ') : `${project.endDate} (End of Day)`}</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* 24h Early Warning Toggle Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !project.earlyWarningEnabled;
+                  const updatedHistory: ProjectActivity[] = [
+                    {
+                      id: `act-${Date.now()}-early-warning-toggle`,
+                      timestamp: new Date().toISOString(),
+                      type: 'project_edited',
+                      message: `24-Hour Early Warning notifications ${nextVal ? 'enabled' : 'disabled'}`,
+                      details: `Target deadline: ${project.reminderDateTime ? project.reminderDateTime.replace('T', ' at ') : project.endDate}`
+                    },
+                    ...(project.history || [])
+                  ];
+                  onUpdateProject({
+                    ...project,
+                    earlyWarningEnabled: nextVal,
+                    earlyWarningSent: false,
+                    history: updatedHistory
+                  });
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs font-mono font-bold cursor-pointer ${
+                  project.earlyWarningEnabled
+                    ? 'bg-amber-400 text-stone-950 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                    : 'bg-stone-900/80 text-stone-400 border-white/[0.08] hover:text-stone-200'
+                }`}
+                title="Toggle 24-Hour Early Warning Notification"
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>24h Early Warning: {project.earlyWarningEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-white/[0.04] text-[10px]">
+              <span className="text-stone-400 flex items-center gap-1.5">
+                <Clock className="w-3 h-3 text-amber-500 shrink-0" />
+                {project.earlyWarningEnabled
+                  ? 'Custom alert toast triggers automatically 24 hours prior to deadline'
+                  : 'Early warning disabled. Toggle on to trigger custom toast 24h before deadline'}
+              </span>
+              <button
+                type="button"
+                onClick={() => dispatchEarlyWarningToast(project)}
+                className="px-2 py-1 rounded bg-amber-400/10 hover:bg-amber-400/20 text-amber-400 border border-amber-400/30 text-[9px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer"
+                title="Simulate how the 24-hour early warning custom toast appears"
+              >
+                Test 24h Toast
+              </button>
+            </div>
+          </div>
+
           {/* Description Section */}
           <div className="space-y-1.5 select-none">
             <h4 className="text-[9px] uppercase tracking-[0.25em] text-stone-500 font-semibold font-sans">Overview</h4>
@@ -986,44 +1343,50 @@ export default function ProjectModal({
                 {/* Selected pills in edit state with delete cross */}
                 <div className="flex flex-wrap gap-1.5">
                   {(project.tags || []).length > 0 ? (
-                    (project.tags || []).map(tag => (
-                      <span
-                        key={tag}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/5 border border-white/[0.08] text-[10px] text-stone-300 font-mono"
-                      >
-                        #{tag}
-                        <button
-                          type="button"
-                          onClick={() => handleTogglePresetTagInModal(tag)}
-                          className="text-stone-500 hover:text-stone-200 focus:outline-none cursor-pointer"
+                    (project.tags || []).map(tag => {
+                      const style = getTagStyle(tag);
+                      return (
+                        <span
+                          key={tag}
+                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border text-[11px] font-mono font-medium shadow-sm ${style}`}
                         >
-                          <X className="w-2.5 h-2.5" />
-                        </button>
-                      </span>
-                    ))
+                          <span className="opacity-60 text-[9px] font-bold">#</span>
+                          {tag}
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePresetTagInModal(tag)}
+                            className="ml-0.5 opacity-70 hover:opacity-100 focus:outline-none cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      );
+                    })
                   ) : (
                     <span className="text-[10px] text-stone-600 italic">No tags selected. Click presets below to toggle.</span>
                   )}
                 </div>
 
                 {/* Preset presets in edit state */}
-                <div className="space-y-1 pt-1 border-t border-white/[0.03]">
+                <div className="space-y-1 pt-1.5 border-t border-white/[0.03]">
                   <span className="text-[8px] text-stone-600 font-bold uppercase tracking-wider font-mono">Preset Suggestions:</span>
                   <div className="flex flex-wrap gap-1.5">
-                    {['urgent', 'work', 'personal', 'client', 'internal', 'research', 'marketing', 'technical'].map((preset) => {
+                    {['urgent', 'review', 'client', 'work', 'personal', 'internal', 'research', 'marketing', 'technical'].map((preset) => {
                       const isSelected = (project.tags || []).includes(preset);
+                      const style = getTagStyle(preset);
                       return (
                         <button
                           type="button"
                           key={preset}
                           onClick={() => handleTogglePresetTagInModal(preset)}
-                          className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all border ${
+                          className={`inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-mono transition-all border ${
                             isSelected
-                              ? 'bg-amber-500/15 border-amber-500/30 text-amber-300 font-bold'
-                              : 'bg-[#161616] border-white/[0.04] text-stone-500 hover:text-stone-300'
+                              ? `${style} font-bold ring-1 ring-amber-400/30 shadow-sm`
+                              : 'bg-[#161616] border-white/[0.05] text-stone-500 hover:text-stone-300 hover:border-white/10'
                           }`}
                         >
-                          #{preset}
+                          <span className="opacity-60 text-[9px]">#</span>
+                          {preset}
                         </button>
                       );
                     })}
@@ -1033,14 +1396,18 @@ export default function ProjectModal({
             ) : (
               <div className="flex flex-wrap gap-1.5 bg-[#111111] rounded-xl p-3 border border-white/[0.04] min-h-[42px] items-center">
                 {(project.tags || []).length > 0 ? (
-                  (project.tags || []).map(tag => (
-                    <span
-                      key={tag}
-                      className="px-2 py-0.5 rounded bg-white/5 border border-white/[0.08] text-[10px] text-stone-300 font-mono"
-                    >
-                      #{tag}
-                    </span>
-                  ))
+                  (project.tags || []).map(tag => {
+                    const style = getTagStyle(tag);
+                    return (
+                      <span
+                        key={tag}
+                        className={`inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full border text-[11px] font-mono font-medium shadow-sm ${style}`}
+                      >
+                        <span className="opacity-60 text-[9px] font-bold">#</span>
+                        {tag}
+                      </span>
+                    );
+                  })
                 ) : (
                   <span className="text-[10px] text-stone-600 italic">No tags added yet. Click 'Manage' to categorize this project!</span>
                 )}
@@ -1066,11 +1433,11 @@ export default function ProjectModal({
             {/* Display / Edit Collaborators */}
             {isEditingCollaborators ? (
               <div className="bg-[#111111] rounded-xl p-3 border border-white/[0.04] space-y-3">
-                {/* Custom input */}
+                {/* Custom email input */}
                 <div className="flex gap-2">
                   <input
-                    type="text"
-                    placeholder="New collaborator..."
+                    type="email"
+                    placeholder="Enter email to invite (e.g. alex@company.com)..."
                     value={modalCollaboratorInput}
                     onChange={(e) => setModalCollaboratorInput(e.target.value)}
                     onKeyDown={handleModalCollaboratorInputKeyDown}
@@ -1079,218 +1446,201 @@ export default function ProjectModal({
                   <button
                     type="button"
                     onClick={handleAddCollaboratorInModal}
-                    className="px-2.5 py-1 bg-stone-800 hover:bg-stone-700 text-stone-200 hover:text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
+                    className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
                   >
-                    + Add
+                    + Invite
                   </button>
                 </div>
 
-                {/* Selected collaborators with delete cross */}
-                <div className="flex flex-wrap gap-1.5">
+                {/* Selected collaborators with avatar badge and delete cross */}
+                <div className="flex flex-wrap gap-2">
                   {(project.collaborators || []).length > 0 ? (
                     (project.collaborators || []).map(collab => (
                       <span
                         key={collab}
-                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/[0.08] text-[10px] text-stone-300 font-sans"
+                        className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#161616] border border-white/[0.08] text-xs text-stone-200 font-sans shadow-sm"
                       >
-                        <span className="w-1.5 h-1.5 rounded-full bg-stone-400" />
-                        {collab}
+                        <span className={`w-4 h-4 rounded-full text-[8px] font-mono font-bold flex items-center justify-center shrink-0 ${getAvatarColor(collab)}`}>
+                          {getInitials(collab)}
+                        </span>
+                        <span className="truncate max-w-[160px]">{collab}</span>
                         <button
                           type="button"
                           onClick={() => handleRemoveCollaboratorInModal(collab)}
-                          className="text-stone-500 hover:text-stone-200 focus:outline-none cursor-pointer"
+                          className="text-stone-500 hover:text-stone-200 focus:outline-none cursor-pointer p-0.5 ml-0.5"
+                          title="Remove collaborator"
                         >
-                          <X className="w-2.5 h-2.5" />
+                          <X className="w-3 h-3" />
                         </button>
                       </span>
                     ))
                   ) : (
-                    <span className="text-[10px] text-stone-600 italic">No collaborators added yet. Type a name and click 'Add' above.</span>
+                    <span className="text-[10px] text-stone-600 italic">No collaborators added yet. Type an email address above and click 'Invite'.</span>
                   )}
                 </div>
               </div>
             ) : (
-              <div className="flex flex-wrap gap-1.5 bg-[#111111] rounded-xl p-3 border border-white/[0.04] min-h-[42px] items-center">
+              <div className="flex flex-wrap gap-2 bg-[#111111] rounded-xl p-3 border border-white/[0.04] min-h-[46px] items-center">
                 {(project.collaborators || []).length > 0 ? (
                   (project.collaborators || []).map(collab => (
                     <span
                       key={collab}
-                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/[0.08] text-[10px] text-stone-300 font-sans"
+                      className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#161616] border border-white/[0.06] text-xs text-stone-200 font-sans"
                     >
-                      <span className="w-1.5 h-1.5 rounded-full bg-stone-500" />
-                      {collab}
+                      <span className={`w-4 h-4 rounded-full text-[8px] font-mono font-bold flex items-center justify-center shrink-0 ${getAvatarColor(collab)}`}>
+                        {getInitials(collab)}
+                      </span>
+                      <span className="truncate max-w-[180px]">{collab}</span>
                     </span>
                   ))
                 ) : (
-                  <span className="text-[10px] text-stone-600 italic">No collaborators added yet. Click 'Manage' to assemble a team!</span>
+                  <span className="text-[10px] text-stone-600 italic">No collaborators added yet. Click 'Manage' to invite team members!</span>
                 )}
               </div>
             )}
           </div>
 
-          {/* Project Notes Section */}
-          <div className="space-y-1.5" id={`project-notes-section-${project.id}`}>
+          {/* Project Goals Section */}
+          <div className="space-y-1.5" id={`project-goals-section-${project.id}`}>
             <div className="flex items-center justify-between">
-              <h4 className="text-[9px] uppercase tracking-[0.25em] text-stone-500 font-semibold font-sans">Project Notes</h4>
-              {project.notes ? (
-                <span className="text-[8px] text-stone-500 uppercase tracking-widest font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400/90 border border-emerald-500/15">
-                  Rich Text / Markdown Active
+              <div className="flex items-center gap-1.5">
+                <h4 className="text-[9px] uppercase tracking-[0.25em] text-stone-500 font-semibold font-sans flex items-center gap-1">
+                  <Target className="w-3 h-3 text-amber-400" /> Project Goals
+                </h4>
+                {normalizedGoals.length > 0 && (
+                  <span className="text-[9px] font-mono font-semibold text-stone-400 bg-stone-900 px-1.5 py-0.5 rounded border border-white/[0.06]">
+                    {completedGoalsCount}/{normalizedGoals.length}
+                  </span>
+                )}
+              </div>
+              {normalizedGoals.length > 0 && (
+                <span className="text-[9px] font-mono text-amber-400 font-bold">
+                  {goalProgressPercent}%
                 </span>
-              ) : (
-                <span className="text-[9px] text-stone-600 font-mono font-bold uppercase tracking-wider">Empty notes</span>
               )}
             </div>
-            {isEditingNotes ? (
-              <div className="space-y-2 bg-[#111111] rounded-xl border border-white/[0.04] p-3">
-                {/* Write vs Preview toggle and toolbar */}
-                <div className="flex items-center justify-between border-b border-white/[0.04] pb-2 mb-2 select-none">
-                  {/* Mode switcher tabs */}
-                  <div className="flex bg-[#161616] p-0.5 rounded-md border border-white/[0.04]">
-                    <button
-                      type="button"
-                      onClick={() => setEditorMode('write')}
-                      className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded ${
-                        editorMode === 'write'
-                          ? 'bg-stone-800 text-stone-100'
-                          : 'text-stone-500 hover:text-stone-300'
-                      }`}
-                    >
-                      Write
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditorMode('preview')}
-                      className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded ${
-                        editorMode === 'preview'
-                          ? 'bg-stone-800 text-stone-100'
-                          : 'text-stone-500 hover:text-stone-300'
-                      }`}
-                    >
-                      Preview
-                    </button>
-                  </div>
 
-                  {/* Formatting Toolbar - only in Write mode */}
-                  {editorMode === 'write' && (
-                    <div className="flex items-center gap-1 bg-[#161616] py-0.5 px-1.5 rounded-md border border-white/[0.04]">
-                      <button
-                        type="button"
-                        onClick={() => insertFormat('bold')}
-                        className="p-1 text-stone-500 hover:text-stone-200 hover:bg-white/5 rounded transition-colors"
-                        title="Bold (**text**)"
-                      >
-                        <Bold className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => insertFormat('italic')}
-                        className="p-1 text-stone-500 hover:text-stone-200 hover:bg-white/5 rounded transition-colors"
-                        title="Italic (*text*)"
-                      >
-                        <Italic className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => insertFormat('heading')}
-                        className="p-1 text-stone-500 hover:text-stone-200 hover:bg-white/5 rounded transition-colors"
-                        title="Heading (# text)"
-                      >
-                        <Heading className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => insertFormat('list')}
-                        className="p-1 text-stone-500 hover:text-stone-200 hover:bg-white/5 rounded transition-colors"
-                        title="List (- item)"
-                      >
-                        <List className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => insertFormat('code')}
-                        className="p-1 text-stone-500 hover:text-stone-200 hover:bg-white/5 rounded transition-colors"
-                        title="Inline Code (`code`)"
-                      >
-                        <Code className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => insertFormat('link')}
-                        className="p-1 text-stone-500 hover:text-stone-200 hover:bg-white/5 rounded transition-colors"
-                        title="Link ([text](url))"
-                      >
-                        <Link className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
+            <div className="bg-[#111111] rounded-xl p-3 border border-white/[0.04] space-y-2.5">
+              {/* Goal Progress Bar */}
+              {normalizedGoals.length > 0 && (
+                <div className="w-full h-1 bg-stone-950 rounded-full overflow-hidden border border-white/[0.04]">
+                  <div 
+                    className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-500" 
+                    style={{ width: `${goalProgressPercent}%` }}
+                  />
                 </div>
+              )}
 
-                {editorMode === 'write' ? (
-                  <div className="space-y-1">
-                    <textarea
-                      ref={textareaRef}
-                      value={editedNotes}
-                      onChange={(e) => setEditedNotes(e.target.value)}
-                      placeholder="Add links, references or use Markdown:&#10;# Heading 1&#10;**Bold Text**&#10;- Bullet point&#10;`code` or ```code block```&#10;[My Link](https://google.com)"
-                      rows={5}
-                      className="w-full bg-transparent text-xs text-stone-300 placeholder-stone-600 focus:outline-none font-mono resize-none leading-relaxed min-h-[100px]"
-                    />
-                    <div className="text-[8px] text-stone-600 font-mono text-right select-none uppercase tracking-wider">
-                      Formatting buttons auto-insert Markdown tags
+              {/* Goals Checklist Items */}
+              <div className="space-y-1.5">
+                {normalizedGoals.length > 0 ? (
+                  normalizedGoals.map((goal) => (
+                    <div 
+                      key={goal.id}
+                      className={`group flex items-center justify-between gap-2 p-2 rounded-lg border transition-all ${
+                        goal.completed 
+                          ? 'bg-emerald-950/10 border-emerald-500/20 text-stone-400' 
+                          : 'bg-[#161616] border-white/[0.04] hover:border-white/10 text-stone-200'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleToggleGoalInModal(goal.id)}
+                        className="flex items-start gap-2.5 min-w-0 flex-1 text-left focus:outline-none cursor-pointer"
+                      >
+                        <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                          goal.completed 
+                            ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' 
+                            : 'bg-stone-900 border-stone-700 text-transparent group-hover:border-stone-500'
+                        }`}>
+                          {goal.completed ? <Check className="w-3 h-3" /> : null}
+                        </span>
+                        <span className={`text-xs font-sans leading-snug break-words ${
+                          goal.completed ? 'line-through text-stone-500' : 'text-stone-200 font-medium'
+                        }`}>
+                          {goal.text}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveGoalInModal(goal.id)}
+                        className="opacity-0 group-hover:opacity-100 text-stone-600 hover:text-stone-300 focus:outline-none transition-opacity cursor-pointer p-1 shrink-0"
+                        title="Delete goal"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </div>
-                  </div>
+                  ))
                 ) : (
-                  <div className="min-h-[100px] max-h-[250px] overflow-y-auto pr-1 pb-1 scrollbar-thin">
-                    {editedNotes.trim() ? (
-                      <RichTextRenderer content={editedNotes} />
-                    ) : (
-                      <p className="text-stone-600 italic text-xs font-sans">No notes written to preview. Switch to 'Write' tab to add notes.</p>
-                    )}
-                  </div>
+                  <span className="text-[10px] text-stone-600 italic block py-0.5">
+                    No project goals defined yet. Add key objectives below!
+                  </span>
                 )}
-
-                {/* Actions */}
-                <div className="flex justify-end gap-2 border-t border-white/[0.04] pt-2 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditedNotes(project.notes || '');
-                      setIsEditingNotes(false);
-                    }}
-                    className="px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider text-stone-500 hover:text-stone-300 transition-all cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveNotes}
-                    className="px-2.5 py-1 rounded bg-white text-stone-950 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer font-sans"
-                  >
-                    Save Notes
-                  </button>
-                </div>
               </div>
-            ) : (
-              <div 
-                onClick={() => {
-                  setEditedNotes(project.notes || '');
-                  setEditorMode('write');
-                  setIsEditingNotes(true);
-                }}
-                className="group cursor-pointer relative text-xs bg-[#111111] hover:bg-[#141414] hover:border-white/[0.08] rounded-xl p-4 border border-white/[0.04] font-sans transition-all min-h-[60px]"
+
+              {/* Add Goal Input */}
+              <form onSubmit={handleAddGoalInModal} className="flex gap-2 pt-1 border-t border-white/[0.03]">
+                <input
+                  type="text"
+                  placeholder="Add a new project goal..."
+                  value={newGoalInput}
+                  onChange={(e) => setNewGoalInput(e.target.value)}
+                  className="flex-1 bg-[#161616] border border-white/[0.06] rounded-lg px-2.5 py-1 text-xs text-stone-300 placeholder-stone-600 focus:outline-none focus:border-stone-500 font-sans"
+                />
+                <button
+                  type="submit"
+                  disabled={!newGoalInput.trim()}
+                  className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 disabled:opacity-40 disabled:hover:bg-amber-500/15 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                >
+                  <Plus className="w-3 h-3" /> Goal
+                </button>
+              </form>
+            </div>
+          </div>
+
+          {/* Project Notes Section (Quick Preview linking to Notes tab) */}
+          <div className="space-y-1.5" id={`project-notes-section-${project.id}`}>
+            <div className="flex items-center justify-between">
+              <h4 className="text-[9px] uppercase tracking-[0.25em] text-stone-500 font-semibold font-sans flex items-center gap-1.5">
+                <FileText className="w-3 h-3 text-amber-500" />
+                Project Notes & Scratchpad
+              </h4>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('notes')}
+                className="text-[9px] text-amber-400 hover:text-amber-300 uppercase tracking-widest font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 transition-colors flex items-center gap-1 cursor-pointer"
               >
-                {project.notes ? (
-                  <div className="prose prose-invert max-w-none">
-                    <RichTextRenderer content={project.notes} />
+                Open Scratchpad &rarr;
+              </button>
+            </div>
+            <div 
+              onClick={() => setActiveSubTab('notes')}
+              className="group cursor-pointer bg-[#111111] hover:bg-[#141414] hover:border-amber-500/30 rounded-xl p-4 border border-white/[0.04] transition-all"
+            >
+              {project.notes?.trim() ? (
+                <div className="space-y-2">
+                  <div className="text-xs text-stone-300 font-sans line-clamp-3 leading-relaxed">
+                    {project.notes}
                   </div>
-                ) : (
-                  <p className="text-stone-600 italic">No notes captured yet. Click here to store links, structured markdown details, or general text notes...</p>
-                )}
-                <div className="absolute right-3.5 bottom-2 opacity-0 group-hover:opacity-100 transition-opacity text-[8px] uppercase tracking-[0.15em] text-stone-500 font-mono font-bold flex items-center gap-1 select-none">
-                  <Edit className="w-2.5 h-2.5" /> Click to Edit Notes
+                  <div className="flex items-center justify-between pt-2 border-t border-white/[0.03]">
+                    <span className="text-[9px] font-mono text-stone-500">
+                      {project.notes.length} characters • Markdown formatted
+                    </span>
+                    <span className="text-[9px] font-mono font-bold text-amber-400 group-hover:underline flex items-center gap-1">
+                      Edit in Scratchpad &rarr;
+                    </span>
+                  </div>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-xs text-stone-500 italic">No notes captured yet. Click here to open the rich Markdown scratchpad...</p>
+                  <span className="text-[9px] font-mono text-amber-400/90 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                    + Add Notes
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Segmented Sub Tabs */}
@@ -1324,6 +1674,17 @@ export default function ProjectModal({
               }`}
             >
               Milestones ({completedMilestones}/{totalMilestones})
+            </button>
+            <button
+              onClick={() => setActiveSubTab('notes')}
+              className={`flex-1 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded transition-all flex items-center justify-center gap-1.5 ${
+                activeSubTab === 'notes' 
+                  ? 'bg-stone-800 text-white shadow-sm' 
+                  : 'text-stone-500 hover:text-stone-300'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5 text-amber-500" />
+              Notes {project.notes?.trim() ? '•' : ''}
             </button>
             <button
               onClick={() => setActiveSubTab('activity')}
@@ -1957,65 +2318,15 @@ export default function ProjectModal({
 
           {/* TAB 3: ACTIVITY CONTENT */}
           {activeSubTab === 'activity' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between select-none">
-                <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider font-mono">
-                  Chronological Audit Log
-                </span>
-                <span className="text-[9px] text-stone-500 font-mono flex items-center gap-1">
-                  <History className="w-3 h-3" /> Real-time tracking
-                </span>
-              </div>
+            <ActivityLog history={project.history} projectName={project.name} />
+          )}
 
-              <div className="relative border-l border-white/[0.05] pl-4 ml-2.5 py-1 space-y-4">
-                {(!project.history || project.history.length === 0) ? (
-                  <div className="text-center py-8 border border-dashed border-white/[0.08] rounded-xl bg-[#121212]/10 -ml-4">
-                    <History className="w-6 h-6 text-stone-700 mx-auto mb-2 animate-pulse" />
-                    <p className="text-xs font-semibold text-stone-400">No activity recorded yet</p>
-                    <p className="text-[10px] text-stone-600 mt-1 max-w-[200px] mx-auto leading-normal">
-                      Changes to milestones and status will be logged chronologically here.
-                    </p>
-                  </div>
-                ) : (
-                  [...project.history]
-                    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                    .map((act) => (
-                      <div key={act.id} className="relative group/act select-none">
-                        
-                        {/* Timeline Ring/Badge */}
-                        <div className="absolute -left-[24px] top-1 w-4 h-4 rounded-full border border-white/[0.06] bg-[#0c0c0c] flex items-center justify-center shadow-md">
-                          {getActivityIcon(act.type)}
-                        </div>
-
-                        {/* Card Content */}
-                        <div className="bg-[#111111] border border-white/[0.04] hover:border-white/[0.08] rounded-lg p-3 space-y-1.5 transition-all">
-                          <div className="flex items-start justify-between gap-3">
-                            <span className="text-xs font-serif font-light text-white leading-normal flex-1">
-                              {act.message}
-                            </span>
-                            <div className="text-right shrink-0">
-                              <span className="text-[9px] text-stone-500 font-mono block leading-none">
-                                {formatActivityTime(act.timestamp)}
-                              </span>
-                              {getRelativeTimeString(act.timestamp) && (
-                                <span className="text-[8px] text-amber-500/80 font-mono font-bold uppercase tracking-wider block mt-1 leading-none">
-                                  {getRelativeTimeString(act.timestamp)}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {act.details && (
-                            <p className="text-[10px] text-stone-500 font-mono leading-relaxed bg-[#121212] px-2.5 py-1.5 rounded border border-white/[0.02]">
-                              {act.details}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                )}
-              </div>
-            </div>
+          {/* TAB 4: NOTES CONTENT */}
+          {activeSubTab === 'notes' && (
+            <ProjectNotesTab 
+              project={project} 
+              onUpdateProject={onUpdateProject} 
+            />
           )}
 
         </div>
@@ -2027,6 +2338,30 @@ export default function ProjectModal({
           {!confirmDelete ? (
             <>
               <button
+                type="button"
+                onClick={handleArchiveProject}
+                disabled={isArchiving}
+                className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 focus:outline-none cursor-pointer shadow-sm ${
+                  project.status === 'archived'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                    : 'bg-[#141414] hover:bg-[#1c1c1c] text-stone-300 border border-white/[0.08] hover:text-white'
+                }`}
+                title={project.status === 'archived' ? 'Restore Project from Archive' : 'Archive Project'}
+              >
+                {project.status === 'archived' ? (
+                  <>
+                    <ArchiveRestore className={`w-3.5 h-3.5 text-amber-400 ${isArchiving ? 'animate-spin' : ''}`} />
+                    <span>Unarchive</span>
+                  </>
+                ) : (
+                  <>
+                    <Archive className={`w-3.5 h-3.5 text-amber-400 ${isArchiving ? 'animate-bounce' : ''}`} />
+                    <span>Archive</span>
+                  </>
+                )}
+              </button>
+
+              <button
                 onClick={onEditProjectClick}
                 className="flex-1 bg-[#111111] hover:bg-[#151515] border border-white/[0.05] text-stone-200 py-2 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2 focus:outline-none focus:ring-1 focus:ring-stone-600"
               >
@@ -2034,7 +2369,8 @@ export default function ProjectModal({
               </button>
               <button
                 onClick={() => setConfirmDelete(true)}
-                className="bg-red-950/10 hover:bg-red-950/20 text-red-400 border border-red-900/10 px-3 py-2 rounded-lg text-xs font-semibold transition-all focus:outline-none"
+                className="bg-red-950/10 hover:bg-red-950/20 text-red-400 border border-red-900/10 px-3 py-2 rounded-lg text-xs font-semibold transition-all focus:outline-none cursor-pointer"
+                title="Delete Project"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>

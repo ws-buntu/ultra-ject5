@@ -2,8 +2,9 @@ import React, { useState, useRef } from 'react';
 import { Project } from '../types';
 import { 
   X, Download, Upload, Copy, Check, FileText, FileJson, 
-  AlertTriangle, CheckCircle, Database, HelpCircle 
+  AlertTriangle, CheckCircle, Database, HelpCircle, ListChecks, Target 
 } from 'lucide-react';
+import { normalizeGoals } from '../utils/goalUtils';
 
 interface ExportModalProps {
   projects: Project[];
@@ -31,16 +32,31 @@ export function generateTextSummary(projects: Project[]): string {
       );
     }
 
+    const goals = normalizeGoals(proj.goals);
+    const completedGoals = goals.filter(g => g.completed).length;
+
     text += `${idx + 1}. [${proj.category.toUpperCase()}] ${proj.name}\n`;
     text += `   --------------------------------------------------\n`;
     text += `   Owner:       ${proj.owner}\n`;
     text += `   Timeline:    ${proj.startDate} to ${proj.endDate}\n`;
     text += `   Status:      ${proj.status.toUpperCase()} (Priority: ${proj.priority.toUpperCase()})\n`;
     text += `   Progress:    ${overallProgress}% complete\n`;
+    if (goals.length > 0) {
+      text += `   Goals:       ${completedGoals} / ${goals.length} completed\n`;
+    }
     text += `   Milestones:  ${completedM} / ${totalM} cleared\n\n`;
     
     if (proj.description) {
       text += `   Description:\n   ${proj.description.replace(/\n/g, '\n   ')}\n\n`;
+    }
+
+    if (goals.length > 0) {
+      text += `   Project Goals Checklist:\n`;
+      goals.forEach(g => {
+        const check = g.completed ? '[✓]' : '[ ]';
+        text += `     ${check} ${g.text}\n`;
+      });
+      text += `\n`;
     }
 
     if (proj.initiatives.length > 0) {
@@ -83,6 +99,9 @@ export function generateSingleProjectSummary(proj: Project): string {
     );
   }
 
+  const goals = normalizeGoals(proj.goals);
+  const completedGoals = goals.filter(g => g.completed).length;
+
   let text = `==================================================\n`;
   text += `   ULTRA-JECT 5 — INITIATIVE BRIEF\n`;
   text += `   Generated on: ${new Date().toLocaleDateString()}\n`;
@@ -93,9 +112,21 @@ export function generateSingleProjectSummary(proj: Project): string {
   text += `Timeline:       ${proj.startDate} to ${proj.endDate}\n`;
   text += `Status:         ${proj.status.toUpperCase()} (Priority: ${proj.priority.toUpperCase()})\n`;
   text += `Progress:       ${overallProgress}% complete\n`;
+  if (goals.length > 0) {
+    text += `Goals Status:   ${completedGoals} / ${goals.length} completed\n`;
+  }
   text += `Milestones:     ${completedM} / ${totalM} cleared\n\n`;
 
   text += `Overview:\n${proj.description}\n\n`;
+
+  if (goals.length > 0) {
+    text += `Project Goals Checklist:\n`;
+    goals.forEach(g => {
+      const check = g.completed ? '[✓]' : '[ ]';
+      text += `   ${check} ${g.text}\n`;
+    });
+    text += `\n`;
+  }
 
   if (proj.initiatives.length > 0) {
     text += `Sub-Initiatives Checklist:\n`;
@@ -122,6 +153,43 @@ export function generateSingleProjectSummary(proj: Project): string {
   return text;
 }
 
+export function generateGoalsChecklistText(projects: Project[], selectedProjectId: string): string {
+  const targetProjects = selectedProjectId === 'all'
+    ? projects
+    : projects.filter(p => p.id === selectedProjectId);
+
+  if (targetProjects.length === 0) return 'No projects found for the selected scope.';
+
+  let text = `==================================================\n`;
+  text += `   PROJECT GOALS & REQUIREMENTS CHECKLIST\n`;
+  text += `   Generated on: ${new Date().toLocaleDateString()}\n`;
+  text += `==================================================\n\n`;
+
+  targetProjects.forEach((proj, idx) => {
+    const goals = normalizeGoals(proj.goals);
+    const completedGoals = goals.filter(g => g.completed).length;
+    const percent = goals.length > 0 ? Math.round((completedGoals / goals.length) * 100) : 0;
+
+    text += `${idx + 1}. [${proj.category.toUpperCase()}] ${proj.name}\n`;
+    text += `   Lead Owner: ${proj.owner} | Status: ${proj.status.toUpperCase()}\n`;
+    text += `   Goals Summary: ${completedGoals}/${goals.length} Completed (${percent}%)\n`;
+    text += `   --------------------------------------------------\n`;
+
+    if (goals.length === 0) {
+      text += `   (No project goals defined)\n\n`;
+    } else {
+      goals.forEach(g => {
+        const check = g.completed ? '[✓]' : '[ ]';
+        text += `   ${check} ${g.text}\n`;
+      });
+      text += `\n`;
+    }
+  });
+
+  text += `==================================================\n`;
+  return text;
+}
+
 export default function ExportModal({ 
   projects, 
   onClose, 
@@ -136,6 +204,9 @@ export default function ExportModal({
     initialSelectedProject ? initialSelectedProject.id : 'all'
   );
 
+  // Format mode: full brief or project goals checklist only
+  const [exportFormatMode, setExportFormatMode] = useState<'brief' | 'goals'>('brief');
+
   // Clipboard copies
   const [copied, setCopied] = useState(false);
 
@@ -149,14 +220,17 @@ export default function ExportModal({
   const targetProject = projects.find(p => p.id === selectedProjectId);
 
   // Generate current text representation
-  const summaryText = selectedProjectId === 'all' 
-    ? generateTextSummary(projects) 
-    : (targetProject ? generateSingleProjectSummary(targetProject) : '');
+  const summaryText = exportFormatMode === 'goals'
+    ? generateGoalsChecklistText(projects, selectedProjectId)
+    : (selectedProjectId === 'all' 
+        ? generateTextSummary(projects) 
+        : (targetProject ? generateSingleProjectSummary(targetProject) : ''));
 
   // Handle trigger text download
   const handleDownloadText = () => {
-    const suffix = selectedProjectId === 'all' ? 'portfolio' : (targetProject?.name.toLowerCase().replace(/[^a-z0-9]/g, '_') || 'initiative');
-    const fileName = `ultra_ject5_summary_${suffix}.txt`;
+    const formatSuffix = exportFormatMode === 'goals' ? 'goals_checklist' : 'brief';
+    const scopeSuffix = selectedProjectId === 'all' ? 'portfolio' : (targetProject?.name.toLowerCase().replace(/[^a-z0-9]/g, '_') || 'initiative');
+    const fileName = `ultra_ject5_${formatSuffix}_${scopeSuffix}.txt`;
     const blob = new Blob([summaryText], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -322,6 +396,39 @@ export default function ExportModal({
                 </select>
               </div>
 
+              {/* Export Text Format Selector */}
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-bold text-stone-500 uppercase tracking-wider font-mono block">
+                  Export Text Format
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExportFormatMode('brief')}
+                    className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      exportFormatMode === 'brief'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 shadow-sm'
+                        : 'bg-[#121212] border-white/[0.06] text-stone-400 hover:text-stone-200 hover:border-stone-700'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Full Executive Brief</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportFormatMode('goals')}
+                    className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      exportFormatMode === 'goals'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 shadow-sm'
+                        : 'bg-[#121212] border-white/[0.06] text-stone-400 hover:text-stone-200 hover:border-stone-700'
+                    }`}
+                  >
+                    <Target className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Project Goals Checklist</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Text Area Preview Box */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
@@ -360,9 +467,10 @@ export default function ExportModal({
               <div className="pt-2">
                 <button
                   onClick={handleDownloadText}
-                  className="w-full bg-white hover:bg-stone-200 active:scale-95 text-stone-950 py-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-sm"
+                  className="w-full bg-white hover:bg-stone-200 active:scale-95 text-stone-950 py-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                 >
-                  <Download className="w-4 h-4" /> Download Text Brief (.txt)
+                  <Download className="w-4 h-4" />
+                  {exportFormatMode === 'goals' ? 'Download Goals Checklist (.txt)' : 'Download Text Brief (.txt)'}
                 </button>
               </div>
             </div>

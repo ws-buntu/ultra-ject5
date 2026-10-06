@@ -1,7 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Project, ProjectCategory, ProjectStatus, Milestone as MilestoneType, ProjectActivity, ProjectPriority } from '../types';
-import { Calendar, User, Milestone, ClipboardList, AlertCircle, Clock, Plus, Bell, BellRing, Trash2, StickyNote, Activity, MoreVertical, ArrowUpDown, ChevronDown, ChevronUp, Archive, SlidersHorizontal, Pin, Copy } from 'lucide-react';
+import { Calendar, User, Milestone, ClipboardList, AlertCircle, AlertTriangle, Clock, Plus, Bell, BellRing, Trash2, StickyNote, Activity, MoreVertical, ArrowUpDown, ChevronDown, ChevronUp, Archive, SlidersHorizontal, Pin, Copy, BarChart3, Target, UserPlus, Mail, Send, X, Check, Zap, Timer, Play, Pause, RotateCcw } from 'lucide-react';
+import ProjectDeepDiveModal from './ProjectDeepDiveModal';
+import { getTagStyle } from '../utils/tagUtils';
+import { normalizeGoals } from '../utils/goalUtils';
+import { getInitials, getAvatarColor } from '../utils/avatarUtils';
+import { getColorClasses } from '../utils/colorUtils';
+import { calculateMomentumScore, getMomentumBadge } from '../utils/momentumUtils';
 
 interface ProjectCardProps {
   key?: string | number;
@@ -28,11 +34,24 @@ export default function ProjectCard({
   const [quickMilestoneWeight, setQuickMilestoneWeight] = useState<number>(25);
 
   const [isSchedulingReminder, setIsSchedulingReminder] = useState(false);
-  const [reminderDate, setReminderDate] = useState(project.endDate);
-  const [reminderTime, setReminderTime] = useState('09:00');
+  const [reminderDate, setReminderDate] = useState(project.reminderDateTime ? project.reminderDateTime.split('T')[0] : project.endDate);
+  const [reminderTime, setReminderTime] = useState(project.reminderDateTime ? project.reminderDateTime.split('T')[1] : '09:00');
+  const [earlyWarningEnabled, setEarlyWarningEnabled] = useState(project.earlyWarningEnabled ?? true);
+
+  useEffect(() => {
+    if (project.reminderDateTime) {
+      setReminderDate(project.reminderDateTime.split('T')[0] || project.endDate);
+      setReminderTime(project.reminderDateTime.split('T')[1] || '09:00');
+    } else {
+      setReminderDate(project.endDate);
+      setReminderTime('09:00');
+    }
+    setEarlyWarningEnabled(project.earlyWarningEnabled ?? true);
+  }, [project.reminderDateTime, project.endDate, project.earlyWarningEnabled]);
   
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
+  const [isDeepDiveOpen, setIsDeepDiveOpen] = useState(false);
 
   const [isSwipedOpen, setIsSwipedOpen] = useState(false);
   const [isQuickEditing, setIsQuickEditing] = useState(false);
@@ -40,6 +59,125 @@ export default function ProjectCard({
   const [editCategory, setEditCategory] = useState<ProjectCategory>(project.category);
   const [editPriority, setEditPriority] = useState<ProjectPriority>(project.priority);
   const [editStatus, setEditStatus] = useState<ProjectStatus>(project.status);
+
+  // Collaborator Invite State & Handler
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [inviteEmailInput, setInviteEmailInput] = useState('');
+  const [inviteFeedback, setInviteFeedback] = useState('');
+
+  // Built-in Stopwatch Timer State & Handlers
+  const [isStopwatchOpen, setIsStopwatchOpen] = useState(false);
+  const [stopwatchInitiativeId, setStopwatchInitiativeId] = useState<string>(
+    project.initiatives && project.initiatives.length > 0 ? project.initiatives[0].id : ''
+  );
+  const [stopwatchSeconds, setStopwatchSeconds] = useState<number>(0);
+  const [isStopwatchRunning, setIsStopwatchRunning] = useState<boolean>(false);
+  const [stopwatchToast, setStopwatchToast] = useState<string | null>(null);
+
+  // Active Stopwatch Ticker Effect
+  useEffect(() => {
+    let interval: any = null;
+    if (isStopwatchRunning) {
+      interval = setInterval(() => {
+        setStopwatchSeconds(prev => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isStopwatchRunning]);
+
+  const formatStopwatchTime = (totalSeconds: number) => {
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    if (hrs > 0) {
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  const handleLogStopwatchTime = () => {
+    if (stopwatchSeconds <= 0) return;
+
+    const chosenInit = project.initiatives ? project.initiatives.find(i => i.id === stopwatchInitiativeId) : undefined;
+    const hours = Math.floor(stopwatchSeconds / 3600);
+    const mins = Math.floor((stopwatchSeconds % 3600) / 60);
+    const secs = stopwatchSeconds % 60;
+    
+    let durationFormatted = '';
+    if (hours > 0) durationFormatted += `${hours}h `;
+    if (mins > 0 || hours > 0) durationFormatted += `${mins}m `;
+    durationFormatted += `${secs}s`;
+
+    const initiativeName = chosenInit ? `Initiative: "${chosenInit.title}"` : 'General Project Task';
+    
+    const newActivity: ProjectActivity = {
+      id: `act-${Date.now()}-time`,
+      timestamp: new Date().toISOString(),
+      type: 'time_logged',
+      message: `Logged ${durationFormatted} focused time on ${initiativeName}`,
+      details: `Tracked using built-in Stopwatch (${formatStopwatchTime(stopwatchSeconds)})`
+    };
+
+    if (onUpdateProject) {
+      onUpdateProject({
+        ...project,
+        history: [newActivity, ...(project.history || [])]
+      });
+    }
+
+    setStopwatchToast(`Logged ${durationFormatted} to Project History!`);
+    setIsStopwatchRunning(false);
+    setStopwatchSeconds(0);
+    setTimeout(() => {
+      setStopwatchToast(null);
+    }, 3500);
+  };
+
+  const handleInviteCollaborator = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const email = inviteEmailInput.trim();
+    if (!email) return;
+
+    if (!email.includes('@') || email.length < 5) {
+      setInviteFeedback('Please enter a valid email address');
+      setTimeout(() => setInviteFeedback(''), 3000);
+      return;
+    }
+
+    const currentCollabs = project.collaborators || [];
+    if (currentCollabs.some(c => c.toLowerCase() === email.toLowerCase())) {
+      setInviteFeedback('Email is already a collaborator');
+      setTimeout(() => setInviteFeedback(''), 3000);
+      return;
+    }
+
+    const updatedCollabs = [...currentCollabs, email];
+    if (onUpdateProject) {
+      onUpdateProject({
+        ...project,
+        collaborators: updatedCollabs,
+        history: [
+          {
+            id: `act-${Date.now()}-invite`,
+            timestamp: new Date().toISOString(),
+            type: 'project_edited',
+            message: `Invited collaborator email: ${email}`,
+            details: `Added ${email} to project team`
+          },
+          ...(project.history || [])
+        ]
+      });
+    }
+
+    setInviteEmailInput('');
+    setInviteFeedback(`Invited ${email}!`);
+    setTimeout(() => {
+      setInviteFeedback('');
+      setIsInviteOpen(false);
+    }, 1800);
+  };
 
   // Sync state values when inline Quick Edit is opened
   const handleStartQuickEdit = () => {
@@ -79,6 +217,15 @@ export default function ProjectCard({
     e.stopPropagation();
     if (!onUpdateProject) return;
 
+    // Trigger haptic vibration feedback if supported
+    if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
+      try {
+        navigator.vibrate(30);
+      } catch {
+        // Silently handle environment missing vibration support
+      }
+    }
+
     const priorities: ProjectPriority[] = ['low', 'medium', 'high', 'critical'];
     const currentIndex = priorities.indexOf(project.priority);
     const nextIndex = (currentIndex + 1) % priorities.length;
@@ -89,8 +236,8 @@ export default function ProjectCard({
         id: `act-${Date.now()}-prio-cycle`,
         timestamp: new Date().toISOString(),
         type: 'project_edited',
-        message: `Priority updated to ${nextPriority.charAt(0).toUpperCase() + nextPriority.slice(1)} (Quick Cycle)`,
-        details: `Cycled from ${project.priority.toUpperCase()} via context menu`
+        message: `Priority changed to ${nextPriority.charAt(0).toUpperCase() + nextPriority.slice(1)} (Quick Edit)`,
+        details: `Cycled priority directly from ${project.priority.toUpperCase()} to ${nextPriority.toUpperCase()} on card`
       },
       ...(project.history || [])
     ];
@@ -114,10 +261,10 @@ export default function ProjectCard({
     return (
       <>
         {parts.map((part, index) => 
-          regex.test(part) ? (
+          part.toLowerCase() === trimmedQuery.toLowerCase() ? (
             <mark 
               key={index} 
-              className="bg-amber-400/25 text-amber-300 px-0.5 rounded font-semibold border-b border-amber-500/25"
+              className="bg-amber-400/35 text-amber-200 px-1 py-0.5 rounded font-bold border-b border-amber-400/50 shadow-sm inline-block"
               style={{ backgroundClip: 'padding-box' }}
             >
               {part}
@@ -130,14 +277,26 @@ export default function ProjectCard({
     );
   };
 
-  // Calculate dynamic progress
-  const calculateProgress = () => {
-    if (!project.initiatives || project.initiatives.length === 0) return 0;
-    const total = project.initiatives.reduce((acc, init) => acc + init.progress, 0);
-    return Math.round(total / project.initiatives.length);
-  };
+  // Calculate dynamic progress & initiative completion
+  const totalInitiativesCount = project.initiatives ? project.initiatives.length : 0;
+  const completedInitiativesCount = project.initiatives ? project.initiatives.filter(i => i.completed || i.progress >= 100).length : 0;
+  
+  // Calculate average completion percentage across all internal initiatives for this project
+  const avgInitiativeProgress = totalInitiativesCount > 0 
+    ? Math.round(
+        project.initiatives.reduce((acc, init) => {
+          const val = init.completed ? 100 : Math.min(100, Math.max(0, init.progress || 0));
+          return acc + val;
+        }, 0) / totalInitiativesCount
+      )
+    : 0;
 
-  const progress = calculateProgress();
+  const progress = avgInitiativeProgress;
+
+  // Goals counters
+  const cardGoals = normalizeGoals(project.goals);
+  const completedGoalsCount = cardGoals.filter(g => g.completed).length;
+  const goalProgressPercent = cardGoals.length > 0 ? Math.round((completedGoalsCount / cardGoals.length) * 100) : 0;
 
   // Milestones counters
   const totalMilestones = project.milestones.length;
@@ -168,61 +327,6 @@ export default function ProjectCard({
   };
 
   const isOverdue = diffDays < 0 && project.status !== 'completed';
-
-  // Color Palette Mapping
-  const getColorClasses = (color?: string) => {
-    switch (color) {
-      case 'amber':
-        return {
-          dot: 'bg-amber-400',
-          text: 'text-amber-400',
-          progressBar: 'bg-amber-400',
-          hoverBorder: 'hover:border-amber-400/30'
-        };
-      case 'emerald':
-        return {
-          dot: 'bg-emerald-400',
-          text: 'text-emerald-400',
-          progressBar: 'bg-emerald-400',
-          hoverBorder: 'hover:border-emerald-400/30'
-        };
-      case 'rose':
-        return {
-          dot: 'bg-rose-400',
-          text: 'text-rose-400',
-          progressBar: 'bg-rose-400',
-          hoverBorder: 'hover:border-rose-400/30'
-        };
-      case 'blue':
-        return {
-          dot: 'bg-blue-400',
-          text: 'text-blue-400',
-          progressBar: 'bg-blue-400',
-          hoverBorder: 'hover:border-blue-400/30'
-        };
-      case 'violet':
-        return {
-          dot: 'bg-violet-400',
-          text: 'text-violet-400',
-          progressBar: 'bg-violet-400',
-          hoverBorder: 'hover:border-violet-400/30'
-        };
-      case 'white':
-        return {
-          dot: 'bg-white',
-          text: 'text-white',
-          progressBar: 'bg-white',
-          hoverBorder: 'hover:border-white/30'
-        };
-      default:
-        return {
-          dot: 'bg-stone-500',
-          text: 'text-stone-300',
-          progressBar: '',
-          hoverBorder: 'hover:border-white/[0.08]'
-        };
-    }
-  };
 
   const colors = getColorClasses(project.color);
 
@@ -425,6 +529,8 @@ export default function ProjectCard({
   };
 
   const priorityStripColor = getPriorityStripColor(project.priority);
+  const momentumScore = calculateMomentumScore(project);
+  const momentumBadge = getMomentumBadge(momentumScore);
 
   if (isQuickEditing) {
     return (
@@ -665,24 +771,36 @@ export default function ProjectCard({
         whileTap={isSwipedOpen ? {} : { scale: 0.98 }}
         whileHover={isSwipedOpen ? {} : { scale: 1.002 }}
       >
+      {/* Color-Coded Top Accent Visual Identifier Stripe */}
+      <div className={`absolute top-0 left-0 right-0 h-[4px] ${colors.stripe} opacity-95 group-hover:opacity-100 transition-all duration-300 rounded-t-xl ${colors.glow}`} id={`color-accent-stripe-${project.id}`} title={`Visual Identifier Accent: ${project.color || 'default'}`} />
+      
       {/* Left Priority Strip */}
       <div className={`absolute left-0 top-0 bottom-0 w-[3.5px] ${priorityStripColor}`} />
       {/* Upper Category, Priority & Status Row */}
       <div className="flex items-center justify-between gap-2 w-full text-xs relative">
-        {/* Category & Priority Pill on the Left */}
-        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+        {/* Category, Priority & Momentum Pill on the Left */}
+        <div className="flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
           <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${catStyles.bg} ${catStyles.text} ${catStyles.border}`}>
-            {project.category}
+            {highlightText(project.category, searchQuery)}
           </span>
           <button
             type="button"
             onClick={handleCyclePriority}
-            className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border transition-all duration-200 hover:scale-105 hover:brightness-110 active:scale-95 cursor-pointer ${prioStyles.bg} ${prioStyles.text} ${prioStyles.border || 'border-transparent'}`}
-            title="Priority (Click to cycle Low -> Medium -> High -> Critical)"
+            className={`group/prio flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border transition-all duration-200 hover:scale-105 hover:brightness-120 active:scale-95 cursor-pointer shadow-sm ${prioStyles.bg} ${prioStyles.text} ${prioStyles.border || 'border-transparent'}`}
+            title={`Priority: ${prioStyles.label} — Click to cycle priority (Low -> Medium -> High -> Critical)`}
+            id={`quick-priority-btn-${project.id}`}
           >
-            <span className={`w-1 h-1 rounded-full ${prioStyles.dot}`} />
-            {prioStyles.label}
+            <span className={`w-1.5 h-1.5 rounded-full ${prioStyles.dot}`} />
+            <span>{prioStyles.label}</span>
+            <ArrowUpDown className="w-2.5 h-2.5 opacity-60 group-hover/prio:opacity-100 transition-opacity ml-0.5 text-stone-300" />
           </button>
+          <span
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border transition-all ${momentumBadge.colorClass}`}
+            title={`Momentum Score: ${momentumScore}/100 (${momentumBadge.label} — factors in deadline proximity, initiative progress %, and priority level)`}
+          >
+            <Zap className={`w-2.5 h-2.5 ${momentumBadge.iconColor}`} />
+            <span>{momentumScore}</span>
+          </span>
         </div>
 
         {/* Status Pill and Context Actions on the Right */}
@@ -822,20 +940,50 @@ export default function ProjectCard({
         <div className="flex flex-col gap-1 flex-1">
           <h3 className="font-serif font-light text-base text-white group-hover:text-stone-200 transition-colors leading-snug flex items-center gap-2 flex-wrap">
             {project.pinned && (
-              <Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500/15 shrink-0 transform rotate-45" title="Pinned Initiative" />
+              <span title="Pinned Initiative">
+                <Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500/15 shrink-0 transform rotate-45" />
+              </span>
             )}
             {project.color && (
               <span className={`w-1.5 h-1.5 rounded-full ${colors.dot} shrink-0 animate-pulse`} />
             )}
-            <span>{highlightText(project.name, searchQuery)}</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsDeepDiveOpen(true);
+              }}
+              className="text-left font-serif font-light text-base text-white hover:text-amber-400 hover:underline underline-offset-4 transition-colors cursor-pointer flex items-center gap-1.5 group/title"
+              title="Click to view Deep Dive Statistics (Days active, avg completion speed, contributor distribution)"
+              id={`deep-dive-trigger-${project.id}`}
+            >
+              <span>{highlightText(project.name, searchQuery)}</span>
+              <BarChart3 className="w-3.5 h-3.5 text-stone-500 opacity-60 group-hover/title:opacity-100 group-hover/title:text-amber-400 transition-all shrink-0 ml-0.5" />
+            </button>
           </h3>
           
-          {/* Visual Progress Bar beneath Title */}
-          <div className="w-full h-[3px] bg-stone-900/80 rounded-full overflow-hidden my-1.5" id={`title-progress-bar-container-${project.id}`}>
+          {/* Visual Progress Bar beneath Title with Initiatives Average Completion % */}
+          <div className="flex items-center justify-between text-[10px] font-mono text-stone-400 mt-1 mb-0.5">
+            <span className="flex items-center gap-1 font-medium text-stone-400">
+              <span className="text-stone-500 text-[9px] uppercase tracking-wider font-bold">Initiative Progress</span>
+              <span className="text-amber-400 font-bold ml-0.5">{completedInitiativesCount}</span>
+              <span className="text-stone-600">/</span>
+              <span className="text-stone-300 font-semibold">{totalInitiativesCount}</span>
+            </span>
+            <span className="text-[10px] font-bold text-amber-300/90 font-mono" title="Average completion percentage across internal initiatives">
+              {avgInitiativeProgress}% avg
+            </span>
+          </div>
+
+          <div 
+            className="w-full h-[4px] bg-stone-900/80 rounded-full overflow-hidden mb-1.5 border border-white/[0.04]" 
+            id={`title-progress-bar-container-${project.id}`}
+            title={`Average Initiative Completion: ${avgInitiativeProgress}% (${completedInitiativesCount}/${totalInitiativesCount} fully completed)`}
+          >
             <div 
               id={`title-progress-bar-fill-${project.id}`}
               className={`h-full ${getProgressBarColor()} rounded-full transition-all duration-500`}
-              style={{ width: `${progress}%` }}
+              style={{ width: `${avgInitiativeProgress}%` }}
             />
           </div>
 
@@ -845,8 +993,11 @@ export default function ProjectCard({
         </div>
         
         {/* Progress Ring visual indicator */}
-        <div className="shrink-0 pt-0.5">
-          <svg className="w-8 h-8 transform -rotate-90" title={`${progress}% Complete`}>
+        <div 
+          className="shrink-0 pt-0.5"
+          title={`Average Initiative Completion: ${avgInitiativeProgress}% across ${totalInitiativesCount} initiatives`}
+        >
+          <svg className="w-8 h-8 transform -rotate-90">
             {/* Background circle */}
             <circle
               cx="16"
@@ -860,10 +1011,10 @@ export default function ProjectCard({
               cx="16"
               cy="16"
               r="10"
-              className={`${project.status === 'completed' ? 'stroke-stone-200' : colors.dot.replace('bg-', 'stroke-')} fill-none transition-all duration-500`}
+              className={`${project.status === 'completed' || avgInitiativeProgress === 100 ? 'stroke-emerald-400' : colors.dot.replace('bg-', 'stroke-')} fill-none transition-all duration-500`}
               strokeWidth="2"
               strokeDasharray={2 * Math.PI * 10}
-              strokeDashoffset={(2 * Math.PI * 10) - (progress / 100) * (2 * Math.PI * 10)}
+              strokeDashoffset={(2 * Math.PI * 10) - (avgInitiativeProgress / 100) * (2 * Math.PI * 10)}
               strokeLinecap="round"
             />
             {/* Center Text inside the SVG */}
@@ -872,10 +1023,10 @@ export default function ProjectCard({
               y="16"
               dominantBaseline="central"
               textAnchor="middle"
-              className="fill-stone-400 font-mono text-[7.5px] font-bold"
+              className="fill-stone-300 font-mono text-[7.5px] font-bold"
               transform="rotate(90 16 16)"
             >
-              {progress}
+              {avgInitiativeProgress}%
             </text>
           </svg>
         </div>
@@ -884,21 +1035,46 @@ export default function ProjectCard({
       {/* Project Tags Pills */}
       {project.tags && project.tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 select-none pt-0.5 pb-1">
-          {project.tags.map(tag => (
-            <span
-              key={tag}
-              className="px-1.5 py-0.5 rounded bg-white/[0.03] border border-white/[0.05] text-[9px] text-stone-400 font-mono transition-colors hover:text-stone-300"
-            >
-              #{highlightText(tag, searchQuery)}
+          {project.tags.map(tag => {
+            const style = getTagStyle(tag);
+            return (
+              <span
+                key={tag}
+                className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full border text-[9.5px] font-mono font-medium shadow-sm transition-all duration-200 ${style}`}
+              >
+                <span className="opacity-60 text-[8.5px] font-bold">#</span>
+                {highlightText(tag, searchQuery)}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Project Goals Summary Badge */}
+      {cardGoals.length > 0 && (
+        <div className="flex items-center justify-between text-[9px] font-mono text-stone-400 bg-stone-950/60 p-1.5 px-2 rounded-lg border border-white/[0.04] mt-0.5 select-none">
+          <span className="flex items-center gap-1.5 text-stone-300">
+            <Target className="w-3 h-3 text-amber-400" />
+            <span className="font-sans font-medium text-[10px] text-stone-300">Goals</span>
+          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-stone-400 font-semibold">
+              {completedGoalsCount}/{cardGoals.length}
             </span>
-          ))}
+            <span className="text-amber-400 font-bold">
+              ({goalProgressPercent}%)
+            </span>
+          </div>
         </div>
       )}
 
       {/* Progress Track */}
       <div className="flex flex-col gap-1.5 mt-1 select-none">
         <div className="flex justify-between items-center text-xs">
-          <span className="text-stone-500 font-mono text-[9px] uppercase tracking-wider">Progress</span>
+          <span className="text-stone-500 font-mono text-[9px] uppercase tracking-wider flex items-center gap-1.5">
+            Initiatives Completion
+            <span className="text-stone-400 font-mono font-semibold text-[9px]">({completedInitiativesCount}/{totalInitiativesCount})</span>
+          </span>
           <span className="text-stone-300 font-semibold font-mono text-[10px]">{progress}%</span>
         </div>
         <div className="w-full h-1 bg-stone-900 rounded-full overflow-hidden">
@@ -988,24 +1164,50 @@ export default function ProjectCard({
         {/* Action Buttons Row */}
         {onUpdateProject && (
           <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+            {/* Stopwatch Timer Toggle Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsStopwatchOpen(prev => !prev);
+                setIsQuickAdding(false);
+                setIsSchedulingReminder(false);
+                setIsPreviewExpanded(false);
+              }}
+              className={`text-[9px] uppercase tracking-wider font-bold px-2 py-1 rounded transition-all cursor-pointer flex items-center gap-1 border ${
+                isStopwatchRunning || stopwatchSeconds > 0 || isStopwatchOpen
+                  ? 'text-emerald-400 bg-emerald-950/30 border-emerald-500/40'
+                  : 'text-stone-400 hover:text-white bg-white/5 hover:bg-white/10 border-white/[0.05]'
+              }`}
+              title="Built-in Stopwatch Timer to track initiative time"
+              id={`stopwatch-trigger-btn-${project.id}`}
+            >
+              <Timer className={`w-3 h-3 ${isStopwatchRunning ? 'text-emerald-400 animate-pulse' : 'text-stone-400'}`} />
+              {isStopwatchRunning || stopwatchSeconds > 0 ? (
+                <span className="font-mono">{formatStopwatchTime(stopwatchSeconds)}</span>
+              ) : (
+                'Stopwatch'
+              )}
+            </button>
+
             {/* Set Reminder Toggle Button */}
             <button
               type="button"
               onClick={() => {
                 setIsSchedulingReminder(prev => !prev);
                 setIsQuickAdding(false);
+                setIsStopwatchOpen(false);
                 setIsPreviewExpanded(false);
               }}
               className={`text-[9px] uppercase tracking-wider font-bold px-2 py-1 rounded transition-all cursor-pointer flex items-center gap-1 border ${
-                project.reminderDateTime
+                project.reminderDateTime || project.earlyWarningEnabled
                   ? 'text-amber-400 bg-amber-950/20 border-amber-500/30'
                   : 'text-stone-400 hover:text-white bg-white/5 hover:bg-white/10 border-white/[0.05]'
               }`}
             >
-              {project.reminderDateTime ? (
+              {project.reminderDateTime || project.earlyWarningEnabled ? (
                 <>
                   <BellRing className="w-3 h-3 text-amber-400 animate-pulse" />
-                  Active
+                  {project.earlyWarningEnabled ? 'Active (24h Alert)' : 'Active'}
                 </>
               ) : (
                 <>
@@ -1021,6 +1223,7 @@ export default function ProjectCard({
               onClick={() => {
                 setIsQuickAdding(prev => !prev);
                 setIsSchedulingReminder(false);
+                setIsStopwatchOpen(false);
                 setIsPreviewExpanded(false);
               }}
               className="text-[9px] uppercase tracking-wider font-bold text-stone-400 hover:text-white bg-white/5 hover:bg-white/10 px-2 py-1 rounded transition-all cursor-pointer flex items-center gap-1 border border-white/[0.05]"
@@ -1035,6 +1238,7 @@ export default function ProjectCard({
                 setIsPreviewExpanded(prev => !prev);
                 setIsQuickAdding(false);
                 setIsSchedulingReminder(false);
+                setIsStopwatchOpen(false);
               }}
               className={`text-[9px] uppercase tracking-wider font-bold px-2 py-1 rounded transition-all cursor-pointer flex items-center gap-1 border ${
                 isPreviewExpanded
@@ -1058,6 +1262,123 @@ export default function ProjectCard({
           </div>
         )}
       </div>
+
+      {/* Stopwatch Timer Drawer Panel */}
+      {isStopwatchOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="bg-gradient-to-br from-[#121212] to-[#0d0d0d] border border-emerald-500/30 rounded-xl p-3.5 space-y-3 mt-1.5 transition-all select-text shadow-lg"
+          id={`stopwatch-panel-${project.id}`}
+        >
+          <div className="flex items-center justify-between border-b border-white/[0.06] pb-2">
+            <div className="flex items-center gap-1.5">
+              <div className="w-5 h-5 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <Timer className="w-3 h-3" />
+              </div>
+              <span className="text-[10px] font-bold text-stone-200 uppercase tracking-wider font-mono">
+                Initiative Stopwatch Timer
+              </span>
+            </div>
+            {isStopwatchRunning && (
+              <span className="flex items-center gap-1 text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 animate-pulse font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                TIMING ACTIVE
+              </span>
+            )}
+          </div>
+
+          {/* Toast Banner */}
+          {stopwatchToast && (
+            <div className="bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-2 animate-bounce">
+              <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
+              <span>{stopwatchToast}</span>
+            </div>
+          )}
+
+          {/* Initiative Selection */}
+          <div className="space-y-1">
+            <label className="text-[9px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
+              Track Time For Initiative:
+            </label>
+            <select
+              value={stopwatchInitiativeId}
+              onChange={(e) => setStopwatchInitiativeId(e.target.value)}
+              className="w-full bg-[#181818] border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-xs text-stone-200 focus:outline-none focus:border-emerald-500 font-sans cursor-pointer"
+            >
+              {project.initiatives && project.initiatives.length > 0 ? (
+                project.initiatives.map((init) => (
+                  <option key={init.id} value={init.id}>
+                    {init.title} {init.completed ? '(Completed)' : `(${init.progress}%)`}
+                  </option>
+                ))
+              ) : (
+                <option value="">General Project Task</option>
+              )}
+            </select>
+          </div>
+
+          {/* Digital Timer Counter Display */}
+          <div className="bg-black/60 border border-white/[0.05] rounded-xl p-3 flex flex-col items-center justify-center space-y-1">
+            <span className="text-[9px] font-mono text-stone-500 uppercase tracking-widest font-bold">
+              Elapsed Time
+            </span>
+            <span className="text-3xl font-mono font-bold tracking-widest text-emerald-400 tabular-nums">
+              {formatStopwatchTime(stopwatchSeconds)}
+            </span>
+          </div>
+
+          {/* Controls Row */}
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <div className="flex items-center gap-1.5">
+              {/* Start / Pause */}
+              <button
+                type="button"
+                onClick={() => setIsStopwatchRunning(prev => !prev)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isStopwatchRunning
+                    ? 'bg-amber-500 hover:bg-amber-600 text-stone-950 shadow-md'
+                    : 'bg-emerald-500 hover:bg-emerald-600 text-stone-950 shadow-md'
+                }`}
+              >
+                {isStopwatchRunning ? (
+                  <>
+                    <Pause className="w-3.5 h-3.5 fill-current" /> Pause
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" /> Start
+                  </>
+                )}
+              </button>
+
+              {/* Reset */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsStopwatchRunning(false);
+                  setStopwatchSeconds(0);
+                }}
+                disabled={stopwatchSeconds === 0}
+                className="px-2.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 disabled:opacity-40 text-stone-300 text-xs font-mono font-medium flex items-center gap-1 border border-white/[0.05] transition-all cursor-pointer"
+                title="Reset stopwatch counter"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-stone-400" /> Reset
+              </button>
+            </div>
+
+            {/* Log to History */}
+            <button
+              type="button"
+              onClick={handleLogStopwatchTime}
+              disabled={stopwatchSeconds === 0}
+              className="px-3 py-1.5 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 disabled:opacity-40 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow"
+              title="Log tracked time session to project history"
+            >
+              <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /> Log Session
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Milestone Preview Panel */}
       {isPreviewExpanded && (
@@ -1189,17 +1510,17 @@ export default function ProjectCard({
         </div>
       )}
 
-      {/* Inline Set Reminder Form */}
+      {/* Inline Set Reminder & Early Warning Form */}
       {isSchedulingReminder && onUpdateProject && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="bg-black/40 border border-white/[0.06] rounded-xl p-3.5 space-y-3 mt-1 transition-all select-text"
+          className="bg-black/50 border border-white/[0.08] rounded-xl p-3.5 space-y-3 mt-1 transition-all select-text shadow-xl"
         >
           <div className="flex items-center justify-between">
-            <span className="text-[9px] font-bold text-stone-400 uppercase tracking-wider font-mono flex items-center gap-1">
-              <Bell className="w-3.5 h-3.5 text-amber-400" /> Schedule Deadline Reminder
+            <span className="text-[10px] font-bold text-stone-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+              <Bell className="w-3.5 h-3.5 text-amber-400" /> Deadline Reminder & Alerts
             </span>
-            {project.reminderDateTime && (
+            {(project.reminderDateTime || project.earlyWarningEnabled) && (
               <button
                 type="button"
                 onClick={() => {
@@ -1208,7 +1529,7 @@ export default function ProjectCard({
                       id: `act-${Date.now()}-rem-cleared`,
                       timestamp: new Date().toISOString(),
                       type: 'project_edited',
-                      message: '⏰ Scheduled deadline reminder cleared',
+                      message: '⏰ Scheduled deadline reminder and early warning cleared',
                     },
                     ...(project.history || [])
                   ];
@@ -1216,51 +1537,127 @@ export default function ProjectCard({
                     ...project,
                     reminderDateTime: undefined,
                     reminderSent: undefined,
+                    earlyWarningEnabled: false,
+                    earlyWarningSent: false,
                     history: updatedHistory
                   });
                   setIsSchedulingReminder(false);
                 }}
                 className="text-[8px] uppercase tracking-wider font-bold text-red-400 hover:text-red-300 flex items-center gap-0.5 cursor-pointer"
-                title="Clear Reminder"
+                title="Clear Reminder and Alerts"
               >
                 <Trash2 className="w-3 h-3" /> Clear
               </button>
             )}
           </div>
 
-          <p className="text-[10px] text-stone-500 leading-normal">
-            By default, we set this to the project's deadline date. You can choose any custom date and time.
+          <p className="text-[10px] text-stone-400 leading-normal">
+            Configure deadline reminders and toggle <span className="text-amber-400 font-semibold">24-hour early warnings</span> to trigger high-priority alert toasts.
           </p>
 
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="text-[8px] text-stone-500 font-bold font-mono uppercase tracking-wider block">Reminder Date</label>
+              <label className="text-[8px] text-stone-400 font-bold font-mono uppercase tracking-wider block">Target Date</label>
               <input
                 type="date"
                 value={reminderDate}
                 onChange={(e) => setReminderDate(e.target.value)}
-                className="w-full bg-[#121212] border border-white/[0.06] rounded-md px-2 py-1 text-xs text-stone-300 focus:outline-none focus:border-stone-500"
+                className="w-full bg-[#121212] border border-white/[0.08] rounded-md px-2 py-1 text-xs text-stone-200 focus:outline-none focus:border-amber-500 font-mono"
                 required
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[8px] text-stone-500 font-bold font-mono uppercase tracking-wider block">Reminder Time</label>
+              <label className="text-[8px] text-stone-400 font-bold font-mono uppercase tracking-wider block">Target Time</label>
               <input
                 type="time"
                 value={reminderTime}
                 onChange={(e) => setReminderTime(e.target.value)}
-                className="w-full bg-[#121212] border border-white/[0.06] rounded-md px-2 py-1 text-xs text-stone-300 focus:outline-none focus:border-stone-500"
+                className="w-full bg-[#121212] border border-white/[0.08] rounded-md px-2 py-1 text-xs text-stone-200 focus:outline-none focus:border-amber-500 font-mono"
                 required
               />
             </div>
           </div>
 
-          {project.reminderDateTime && (
-            <div className="bg-[#141414] border border-amber-500/10 p-2 rounded text-[10px] text-amber-400/95 font-mono flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              <span>
-                Currently scheduled: {project.reminderDateTime.replace('T', ' at ')}
-              </span>
+          {/* 24-Hour Early Warning Notification Toggle */}
+          <div className="bg-[#141414] border border-white/[0.06] rounded-lg p-2.5 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className={`p-1.5 rounded-md ${earlyWarningEnabled ? 'bg-amber-400/20 text-amber-400' : 'bg-stone-800 text-stone-500'}`}>
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-200 block font-mono">
+                    24-Hour Early Warning
+                  </span>
+                  <span className="text-[9px] text-stone-500 leading-tight block">
+                    Trigger custom toast notification 24 hours prior to deadline
+                  </span>
+                </div>
+              </div>
+
+              {/* Toggle Switch */}
+              <button
+                type="button"
+                onClick={() => setEarlyWarningEnabled(!earlyWarningEnabled)}
+                className={`w-9 h-5 rounded-full p-0.5 transition-colors duration-200 outline-none flex items-center cursor-pointer ${
+                  earlyWarningEnabled ? 'bg-amber-400' : 'bg-stone-800'
+                }`}
+                title="Toggle 24-Hour Early Warning Notification"
+              >
+                <div
+                  className={`w-4 h-4 rounded-full bg-stone-950 shadow-md transform transition-transform duration-200 ${
+                    earlyWarningEnabled ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {earlyWarningEnabled && (
+              <div className="flex items-center justify-between pt-1 border-t border-white/[0.04]">
+                <span className="text-[9px] text-amber-400/90 font-mono flex items-center gap-1">
+                  <Zap className="w-3 h-3 text-amber-400 shrink-0" />
+                  Alerts 24h before: {reminderDate} at {reminderTime}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(
+                        new CustomEvent('ultra_jects_toast', {
+                          detail: {
+                            id: `early-warn-test-${Date.now()}-${project.id}`,
+                            projectId: project.id,
+                            projectName: project.name,
+                            type: 'early_warning',
+                            deadlineText: `${reminderDate} at ${reminderTime}`,
+                            message: `The deadline for "${project.name}" is in 24 hours (${reminderDate} at ${reminderTime})! Time to finalize deliverables and review checkpoints.`
+                          }
+                        })
+                      );
+                    }
+                  }}
+                  className="px-2 py-0.5 rounded bg-amber-400/10 hover:bg-amber-400/20 text-amber-400 border border-amber-400/30 text-[8px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer"
+                  title="Simulate and test 24h early warning toast"
+                >
+                  Test Toast
+                </button>
+              </div>
+            )}
+          </div>
+
+          {(project.reminderDateTime || project.earlyWarningEnabled) && (
+            <div className="bg-[#141414] border border-amber-500/15 p-2 rounded text-[10px] text-amber-400/95 font-mono flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span>
+                  {project.reminderDateTime ? project.reminderDateTime.replace('T', ' at ') : project.endDate}
+                </span>
+              </div>
+              {project.earlyWarningEnabled && (
+                <span className="text-[8px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold uppercase tracking-wider">
+                  ⚡ 24h Alert On
+                </span>
+              )}
             </div>
           )}
 
@@ -1290,7 +1687,7 @@ export default function ProjectCard({
                     id: `act-${Date.now()}-rem-set`,
                     timestamp: new Date().toISOString(),
                     type: 'project_edited',
-                    message: `⏰ Scheduled deadline reminder for ${reminderDate} at ${reminderTime}`,
+                    message: `⏰ Scheduled deadline reminder for ${reminderDate} at ${reminderTime} with 24h Early Warning ${earlyWarningEnabled ? 'ENABLED' : 'DISABLED'}`,
                   },
                   ...(project.history || [])
                 ];
@@ -1299,6 +1696,8 @@ export default function ProjectCard({
                   ...project,
                   reminderDateTime: finalDateTime,
                   reminderSent: false,
+                  earlyWarningEnabled: earlyWarningEnabled,
+                  earlyWarningSent: false,
                   history: updatedHistory
                 });
 
@@ -1306,13 +1705,13 @@ export default function ProjectCard({
               }}
               className="px-2.5 py-1 rounded bg-amber-400 hover:bg-amber-300 text-stone-950 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer"
             >
-              Schedule
+              Save Schedule
             </button>
           </div>
         </div>
       )}
 
-      {/* Footer Row: Days Left + Owner */}
+      {/* Footer Row: Deadline + Team Summary Avatars */}
       <div className="flex items-center justify-between text-xs text-stone-500 border-t border-white/[0.04] pt-2.5">
         <div className="flex items-center gap-1.5">
           {isOverdue ? (
@@ -1324,35 +1723,109 @@ export default function ProjectCard({
             {getDeadlineText()}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Stack of overlapping collaborator avatars */}
-          {project.collaborators && project.collaborators.length > 0 && (
-            <div className="flex -space-x-1.5 overflow-hidden">
-              {project.collaborators.map((collab) => {
-                const initials = getInitials(collab);
-                const colorClasses = getAvatarColor(collab);
-                return (
+
+        {/* Visual Team Summary: Owner Avatar + Collaborator Avatar Stack + Invite Button */}
+        <div className="flex items-center gap-2 relative" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center -space-x-1.5 overflow-visible">
+            {/* Owner Avatar Badge */}
+            <div
+              className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[8px] font-bold font-mono bg-amber-500/20 text-amber-300 border border-amber-500/60 select-none z-10 transition-transform hover:-translate-y-0.5 hover:z-30 cursor-help"
+              title={`Owner: ${project.owner}`}
+            >
+              {getInitials(project.owner)}
+            </div>
+
+            {/* Collaborators Stack */}
+            {project.collaborators && project.collaborators.length > 0 && (
+              <>
+                {project.collaborators.slice(0, 3).map((collab) => (
                   <div
                     key={collab}
-                    className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[8px] font-bold font-mono border border-[#0c0c0c] ${colorClasses} select-none transition-transform hover:-translate-y-0.5 hover:z-10`}
-                    title={collab}
+                    className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[8px] font-bold font-mono border border-[#0c0c0c] ${getAvatarColor(collab)} select-none transition-transform hover:-translate-y-0.5 hover:z-30 cursor-help`}
+                    title={`Collaborator: ${collab}`}
                   >
-                    {initials}
+                    {getInitials(collab)}
                   </div>
-                );
-              })}
-            </div>
-          )}
+                ))}
+                {project.collaborators.length > 3 && (
+                  <div
+                    className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[7.5px] font-bold font-mono bg-stone-900 text-stone-400 border border-stone-700 select-none transition-transform hover:-translate-y-0.5 hover:z-30 cursor-help"
+                    title={`+${project.collaborators.length - 3} more collaborators: ${project.collaborators.slice(3).join(', ')}`}
+                  >
+                    +{project.collaborators.length - 3}
+                  </div>
+                )}
+              </>
+            )}
 
-          <div className="flex items-center gap-1.5 bg-stone-950/60 py-0.5 px-2 rounded border border-white/[0.04]">
-            <User className="w-3 h-3 text-stone-600" />
-            <span className="text-[9px] text-stone-400 truncate max-w-[120px] font-mono">
-              {highlightText(project.owner.split(' ')[0], searchQuery)}
-            </span>
+            {/* Invite Collaborator Trigger */}
+            {onUpdateProject && (
+              <button
+                type="button"
+                onClick={() => setIsInviteOpen(prev => !prev)}
+                className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-amber-400 border border-stone-700 hover:border-amber-500/50 transition-all cursor-pointer ml-1.5 z-20 shadow-sm"
+                title="Invite collaborator by email"
+              >
+                <UserPlus className="w-2.5 h-2.5" />
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Inline Collaborator Invite Form Popup */}
+      {isInviteOpen && (
+        <div 
+          onClick={(e) => e.stopPropagation()}
+          className="mt-2 p-2.5 rounded-xl bg-stone-950/95 border border-amber-500/30 shadow-2xl space-y-2 text-xs animate-in fade-in duration-150 select-text"
+        >
+          <div className="flex items-center justify-between border-b border-white/[0.04] pb-1.5">
+            <span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider font-mono flex items-center gap-1.5">
+              <Mail className="w-3 h-3 text-amber-400" /> Invite Collaborator
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsInviteOpen(false)}
+              className="text-stone-500 hover:text-stone-300 p-0.5 cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+
+          <form onSubmit={handleInviteCollaborator} className="flex gap-1.5 pt-0.5">
+            <input
+              type="email"
+              placeholder="e.g. alex@company.com"
+              value={inviteEmailInput}
+              onChange={(e) => setInviteEmailInput(e.target.value)}
+              className="flex-1 bg-stone-900 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-stone-200 placeholder-stone-600 focus:outline-none focus:border-amber-500/50 font-sans"
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={!inviteEmailInput.trim()}
+              className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 disabled:opacity-40 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
+            >
+              <Send className="w-3 h-3" /> Invite
+            </button>
+          </form>
+
+          {inviteFeedback && (
+            <p className={`text-[10px] font-mono ${inviteFeedback.includes('Invited') ? 'text-emerald-400 font-semibold' : 'text-amber-400'}`}>
+              {inviteFeedback}
+            </p>
+          )}
+        </div>
+      )}
     </motion.div>
+
+    {/* Project Deep Dive Analytics Modal */}
+    {isDeepDiveOpen && (
+      <ProjectDeepDiveModal
+        project={project}
+        onClose={() => setIsDeepDiveOpen(false)}
+      />
+    )}
     </div>
   );
 }

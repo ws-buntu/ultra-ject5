@@ -22,9 +22,15 @@ export type ProjectPriority = 'low' | 'medium' | 'high' | 'critical';
 export interface ProjectActivity {
   id: string;
   timestamp: string; // ISO String
-  type: 'status_change' | 'milestone_added' | 'milestone_completed' | 'milestone_incomplete' | 'milestone_deleted' | 'project_created' | 'project_edited';
+  type: 'status_change' | 'milestone_added' | 'milestone_completed' | 'milestone_incomplete' | 'milestone_deleted' | 'project_created' | 'project_edited' | 'time_logged';
   message: string;
   details?: string;
+}
+
+export interface ProjectGoal {
+  id: string;
+  text: string;
+  completed: boolean;
 }
 
 export interface Project {
@@ -45,7 +51,10 @@ export interface Project {
   quickNotes?: string;
   reminderDateTime?: string; // YYYY-MM-DDTHH:mm format
   reminderSent?: boolean;
+  earlyWarningEnabled?: boolean; // Toggle early warning 24 hours before deadline
+  earlyWarningSent?: boolean; // Whether the 24h early warning notification toast has triggered
   tags?: string[];
+  goals?: (string | ProjectGoal)[];
   collaborators?: string[];
   pinned?: boolean;
 }

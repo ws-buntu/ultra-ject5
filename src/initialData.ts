@@ -22,8 +22,15 @@ export const INITIAL_PROJECTS: Project[] = [
       { id: 'mile-1-2', title: 'Alpha Release & QA Hand-off', date: '2026-07-28', completed: false, notes: 'Deploy to staging environments for regression tests.' },
       { id: 'mile-1-3', title: 'Production Rollout & Store Submission', date: '2026-09-15', completed: false, notes: 'Synchronized launch on Google Play & App Store.' }
     ],
-    tags: ['urgent', 'work', 'technical'],
-    collaborators: ['Alex Chen', 'Elena Rostova', 'Tariq Al-Fayed', 'Clara Schumann']
+    tags: ['urgent', 'review', 'client', 'technical'],
+    goals: [
+      { id: 'g-1-1', text: 'Achieve < 200ms checkout API response latency', completed: true },
+      { id: 'g-1-2', text: 'Unify mobile & web checkout experience', completed: false },
+      { id: 'g-1-3', text: 'Reach 99.9% uptime on GraphQL API Gateway', completed: false }
+    ],
+    reminderDateTime: '2026-10-06T18:00',
+    earlyWarningEnabled: true,
+    collaborators: ['alex.chen@techcorp.io', 'elena.rostova@designstudio.com', 'tariq.alfayed@apex.org', 'clara.s@apex.org']
   },
   {
     id: 'proj-2',
@@ -45,8 +52,12 @@ export const INITIAL_PROJECTS: Project[] = [
       { id: 'mile-2-2', title: 'Figma Token Library Export', date: '2026-08-05', completed: false, notes: 'Direct consumption path for front-end engineers.' },
       { id: 'mile-2-3', title: 'Internal Brand Kit Masterclass', date: '2026-08-25', completed: false, notes: 'Hands-on session with the marketing team.' }
     ],
-    tags: ['work', 'personal', 'research'],
-    collaborators: ['Sarah Martinez', 'Sofia Kovalevskaya', 'Marcus Aurelius']
+    tags: ['client', 'review', 'design'],
+    goals: [
+      { id: 'g-2-1', text: 'Ensure full WCAG AA color accessibility compliance', completed: true },
+      { id: 'g-2-2', text: 'Export production Figma tokens for engineering team', completed: false }
+    ],
+    collaborators: ['sarah.martinez@brand.design', 'sofia.k@analytics.io', 'marcus.aurelius@growth.co']
   },
   {
     id: 'proj-3',
@@ -67,8 +78,12 @@ export const INITIAL_PROJECTS: Project[] = [
       { id: 'mile-3-1', title: 'SEO Gap Discovery Report', date: '2026-08-15', completed: false, notes: 'Identifies high-value low-competition targets.' },
       { id: 'mile-3-2', title: 'First Batch (5 Guides) Published', date: '2026-09-30', completed: false, notes: 'Publishing schedule with social amplification.' }
     ],
-    tags: ['marketing', 'research'],
-    collaborators: ['Marcus Aurelius', 'Tariq Al-Fayed']
+    tags: ['marketing', 'client', 'research'],
+    goals: [
+      { id: 'g-3-1', text: 'Rank top 3 for 5 core industry search terms', completed: false },
+      { id: 'g-3-2', text: 'Increase organic blog traffic by 45%', completed: false }
+    ],
+    collaborators: ['marcus.aurelius@growth.co', 'tariq.alfayed@apex.org']
   },
   {
     id: 'proj-4',
@@ -88,7 +103,11 @@ export const INITIAL_PROJECTS: Project[] = [
       { id: 'mile-4-1', title: 'Credential Auditing Protocol Draft', date: '2026-06-10', completed: true, notes: 'Formalized internal security standard.' },
       { id: 'mile-4-2', title: 'Full Sandbox Infrastructure Roll-Down', date: '2026-10-01', completed: false, notes: 'Terminates idle legacy servers to lower risk and cost.' }
     ],
-    tags: ['urgent', 'internal', 'technical'],
-    collaborators: ['Alex Chen', 'Sofia Kovalevskaya', 'John Doe']
+    tags: ['urgent', 'review', 'technical'],
+    goals: [
+      { id: 'g-4-1', text: 'Zero high-severity vulnerability flags remaining', completed: true },
+      { id: 'g-4-2', text: 'Revoke 100% of legacy unused API tokens', completed: true }
+    ],
+    collaborators: ['alex.chen@techcorp.io', 'sofia.k@analytics.io', 'devsec.lead@cloud.org']
   }
 ];
